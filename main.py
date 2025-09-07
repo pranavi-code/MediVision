@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 from transformers import logging
 
 from langgraph.checkpoint.memory import MemorySaver
-from langchain_openai import ChatOpenAI
+from langchain_ollama import ChatOllama
 
 from interface import create_demo
 from medrax.agent import *
@@ -23,10 +23,10 @@ def initialize_agent(
     model_dir="/model-weights",
     temp_dir="temp",
     device="cuda",
-    model="chatgpt-4o-latest",
+    model="mistral:latest",
     temperature=0.7,
     top_p=0.95,
-    openai_kwargs={}
+    ollama_kwargs={}
 ):
     """Initialize the MedRAX agent with specified tools and configuration.
 
@@ -36,10 +36,10 @@ def initialize_agent(
         model_dir (str, optional): Directory containing model weights. Defaults to "/model-weights".
         temp_dir (str, optional): Directory for temporary files. Defaults to "temp".
         device (str, optional): Device to run models on. Defaults to "cuda".
-        model (str, optional): Model to use. Defaults to "chatgpt-4o-latest".
+        model (str, optional): Model to use. Defaults to "mistral:latest".
         temperature (float, optional): Temperature for the model. Defaults to 0.7.
         top_p (float, optional): Top P for the model. Defaults to 0.95.
-        openai_kwargs (dict, optional): Additional keyword arguments for OpenAI API, such as API key and base URL.
+        ollama_kwargs (dict, optional): Additional keyword arguments for Ollama API, such as base URL.
 
     Returns:
         Tuple[Agent, Dict[str, BaseTool]]: Initialized agent and dictionary of tool instances
@@ -73,7 +73,18 @@ def initialize_agent(
             tools_dict[tool_name] = all_tools[tool_name]()
 
     checkpointer = MemorySaver()
-    model = ChatOpenAI(model=model, temperature=temperature, top_p=top_p, **openai_kwargs)
+    
+    # Set default base_url if not provided
+    if "base_url" not in ollama_kwargs:
+        ollama_kwargs["base_url"] = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    
+    model = ChatOllama(
+        model=model, 
+        temperature=temperature, 
+        top_p=top_p, 
+        **ollama_kwargs
+    )
+    
     agent = Agent(
         model,
         tools=list(tools_dict.values()),
@@ -83,7 +94,7 @@ def initialize_agent(
         checkpointer=checkpointer,
     )
 
-    print("Agent initialized")
+    print("Agent initialized with Ollama Mistral")
     return agent, tools_dict
 
 
@@ -108,13 +119,10 @@ if __name__ == "__main__":
         # "ChestXRayGeneratorTool",
     ]
 
-    # Collect the ENV variables
-    openai_kwargs = {}
-    if api_key := os.getenv("OPENAI_API_KEY"):
-        openai_kwargs["api_key"] = api_key
-
-    if base_url := os.getenv("OPENAI_BASE_URL"):
-        openai_kwargs["base_url"] = base_url
+    # Collect the ENV variables for Ollama
+    ollama_kwargs = {}
+    if base_url := os.getenv("OLLAMA_BASE_URL"):
+        ollama_kwargs["base_url"] = base_url
 
     agent, tools_dict = initialize_agent(
         "medrax/docs/system_prompts.txt",
@@ -122,10 +130,10 @@ if __name__ == "__main__":
         model_dir="/model-weights",  # Change this to the path of the model weights
         temp_dir="temp",  # Change this to the path of the temporary directory
         device="cuda",  # Change this to the device you want to use
-        model="gpt-4o",  # Change this to the model you want to use, e.g. gpt-4o-mini
+        model="mistral:latest",  # Change this to the Ollama model you want to use
         temperature=0.7,
         top_p=0.95,
-        openai_kwargs=openai_kwargs
+        ollama_kwargs=ollama_kwargs
     )
     demo = create_demo(agent, tools_dict)
 

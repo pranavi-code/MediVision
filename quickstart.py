@@ -1,5 +1,5 @@
 import json
-import openai
+import ollama
 import os
 import time
 import logging
@@ -11,7 +11,7 @@ from datasets import load_dataset
 
 # Initialize global variables
 logger = logging.getLogger('benchmark')
-model_name = 'chatgpt-4o-latest'  # default value
+model_name = 'mistral:latest'  # default value
 temperature = 0.2  # default value
 log_filename = None
 
@@ -56,7 +56,7 @@ def create_multimodal_request(example, client, use_urls=False, shutdown_event=No
     
     Args:
         example: Dataset example to process
-        client: OpenAI client
+        client: Ollama client
         use_urls: Boolean flag to use image URLs instead of local files
         shutdown_event: Optional threading.Event for graceful shutdown
     """
@@ -65,7 +65,8 @@ Please answer this multiple choice question:
 {example['question']}
 Base your answer only on the provided images and case information."""
 
-    content = [{"type": "text", "text": prompt}]
+    # Prepare images for Ollama
+    images = []
 
     if use_urls:
         # Handle image URLs from the dataset
@@ -79,12 +80,7 @@ Base your answer only on the provided images and case information."""
             if img_url and isinstance(img_url, str):
                 base64_image = encode_image_url(img_url)
                 if base64_image:
-                    content.append({
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}"
-                        }
-                    })
+                    images.append(base64_image)
                     print(f"Successfully loaded image from URL: {img_url}")
     else:
         # Handle local image files
@@ -102,18 +98,13 @@ Base your answer only on the provided images and case information."""
                 if os.path.exists(full_path):
                     base64_image = encode_image(full_path)
                     if base64_image:
-                        content.append({
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            }
-                        })
+                        images.append(base64_image)
                         print(f"Successfully loaded image: {full_path}")
                 else:
                     print(f"Image file not found: {full_path}")
 
     # If no images found, log and return None
-    if len(content) == 1:  # Only the text prompt exists
+    if not images:
         print(f"No images found for question {example.get('question_id', 'unknown')}")
         log_entry = {
             "question_id": example.get('question_id', 'unknown'),
@@ -131,19 +122,26 @@ Base your answer only on the provided images and case information."""
         logger.info(json.dumps(log_entry))
         return None
 
-    messages = [
-        {"role": "system", "content": "You are a medical imaging expert. Provide only the letter corresponding to your answer choice (A/B/C/D/E/F)."},
-        {"role": "user", "content": content}
-    ]
-
     try:
         start_time = time.time()
 
-        response = client.chat.completions.create(
+        response = client.chat(
             model=model_name,
-            messages=messages,
-            max_tokens=50,
-            temperature=temperature
+            messages=[
+                {
+                    "role": "system", 
+                    "content": "You are a medical imaging expert. Provide only the letter corresponding to your answer choice (A/B/C/D/E/F)."
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                    "images": images
+                }
+            ],
+            options={
+                "temperature": temperature,
+                "num_predict": 50,
+            }
         )
         duration = time.time() - start_time
 
@@ -153,15 +151,9 @@ Base your answer only on the provided images and case information."""
             "model": model_name,
             "temperature": temperature,
             "duration": round(duration, 2),
-            "usage": {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens
-            },
-            "model_answer": response.choices[0].message.content,
+            "model_answer": response['message']['content'],
             "correct_answer": example['answer'],
             "input": {
-                "messages": messages,
                 "question": example['question'],
                 "explanation": example.get('explanation', ''),
                 "image_source": "url" if use_urls else "local",
@@ -180,7 +172,6 @@ Base your answer only on the provided images and case information."""
             "status": "error",
             "error": str(e),
             "input": {
-                "messages": messages,
                 "question": example['question'],
                 "explanation": example.get('explanation', ''),
                 "image_source": "url" if use_urls else "local",
@@ -199,7 +190,7 @@ def main():
     # Add command line argument parsing
     parser = argparse.ArgumentParser(description='Run medical image analysis benchmark')
     parser.add_argument('--use-urls', action='store_true', help='Use image URLs instead of local files')
-    parser.add_argument('--model', type=str, default='chatgpt-4o-latest', help='Model name to use')
+    parser.add_argument('--model', type=str, default='mistral:latest', help='Model name to use')
     parser.add_argument('--temperature', type=float, default=0.2, help='Temperature for model inference')
     parser.add_argument('--log-prefix', type=str, help='Prefix for log filename (default: model name)')
     parser.add_argument('--max-cases', type=int, default=None, help='Maximum number of cases to process (default: all)')
@@ -209,7 +200,7 @@ def main():
     global model_name, temperature, log_filename
     model_name = args.model
     temperature = args.temperature
-    log_prefix = args.log_prefix if args.log_prefix is not None else args.model
+    log_prefix = args.log_prefix if args.log_prefix is not None else args.model.replace(':', '_')
     log_filename = f"{log_prefix}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     
     # Setup logging
@@ -230,17 +221,9 @@ def main():
     dataset = load_dataset("json", data_files="chestagentbench/metadata.jsonl")
     train_dataset = dataset["train"]
 
-    # Collecting ENV variables
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise ValueError("OPENAI_API_KEY environment variable is not set.")
-    
-    kwargs = {}
-    if base_url := os.getenv("OPENAI_BASE_URL"):
-        kwargs["base_url"] = base_url
-
-    # Initialize the OpenAI Client
-    client = openai.OpenAI(api_key=api_key, **kwargs)
+    # Initialize the Ollama Client
+    ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    client = ollama.Client(host=ollama_base_url)
 
     total_examples = len(train_dataset)
     processed = 0
@@ -249,6 +232,7 @@ def main():
     print(f"Beginning benchmark evaluation for model {model_name}")
     print(f"Using {'image URLs' if args.use_urls else 'local files'} for images")
     print(f"Temperature: {temperature}")
+    print(f"Ollama URL: {ollama_base_url}")
 
     # Handle max cases limit
     dataset_to_process = train_dataset
@@ -273,7 +257,7 @@ def main():
 
         print(f"Progress: {processed}/{total_examples}")
         print(f"Question ID: {example.get('question_id', 'unknown')}")
-        print(f"Model Answer: {response.choices[0].message.content}")
+        print(f"Model Answer: {response['message']['content']}")
         print(f"Correct Answer: {example['answer']}\n")
 
     print(f"\nBenchmark Summary:")
