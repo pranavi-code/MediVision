@@ -46,23 +46,40 @@ class ChatInterface:
         if not file_path:
             return None
 
-        source = Path(file_path)
-        timestamp = int(time.time())
+        try:
+            source = Path(file_path)
+            timestamp = int(time.time())
 
-        # Save original file with proper suffix
-        suffix = source.suffix.lower()
-        saved_path = self.upload_dir / f"upload_{timestamp}{suffix}"
-        shutil.copy2(file_path, saved_path)  # Use file_path directly instead of source
-        self.original_file_path = str(saved_path)
+            # Save original file with proper suffix
+            suffix = source.suffix.lower()
+            
+            # Validate file format
+            supported_formats = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.dcm']
+            if suffix not in supported_formats:
+                print(f"Unsupported file format: {suffix}")
+                return None
+                
+            saved_path = self.upload_dir / f"upload_{timestamp}{suffix}"
+            shutil.copy2(file_path, saved_path)  # Use file_path directly instead of source
+            self.original_file_path = str(saved_path)
 
-        # Handle DICOM conversion for display only
-        if suffix == ".dcm":
-            output, _ = self.tools_dict["DicomProcessorTool"]._run(str(saved_path))
-            self.display_file_path = output["image_path"]
-        else:
-            self.display_file_path = str(saved_path)
+            # Handle DICOM conversion for display only
+            if suffix == ".dcm":
+                if "DicomProcessorTool" in self.tools_dict:
+                    output, _ = self.tools_dict["DicomProcessorTool"]._run(str(saved_path))
+                    self.display_file_path = output["image_path"]
+                else:
+                    print("DicomProcessorTool not available for DICOM processing")
+                    return None
+            else:
+                self.display_file_path = str(saved_path)
 
-        return self.display_file_path
+            print(f"File uploaded successfully: {self.display_file_path}")
+            return self.display_file_path
+            
+        except Exception as e:
+            print(f"Error handling file upload: {e}")
+            return None
 
     def add_message(
         self, message: str, display_image: str, history: List[dict]
@@ -113,20 +130,38 @@ class ChatInterface:
             messages.append({"role": "user", "content": f"image_path: {image_path}"})
 
             # Load and encode image for multimodal
-            with open(image_path, "rb") as img_file:
-                img_base64 = base64.b64encode(img_file.read()).decode("utf-8")
+            try:
+                with open(image_path, "rb") as img_file:
+                    img_base64 = base64.b64encode(img_file.read()).decode("utf-8")
 
-            messages.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{img_base64}"},
-                        }
-                    ],
-                }
-            )
+                # Determine correct MIME type based on file extension
+                file_ext = Path(image_path).suffix.lower()
+                if file_ext in ['.jpg', '.jpeg']:
+                    mime_type = "image/jpeg"
+                elif file_ext in ['.png']:
+                    mime_type = "image/png"
+                elif file_ext in ['.gif']:
+                    mime_type = "image/gif"
+                elif file_ext in ['.webp']:
+                    mime_type = "image/webp"
+                else:
+                    mime_type = "image/png"  # Default to PNG for unknown formats
+
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:{mime_type};base64,{img_base64}"},
+                            }
+                        ],
+                    }
+                )
+            except Exception as e:
+                print(f"Error processing image {image_path}: {e}")
+                # Add text message about image processing error
+                messages.append({"role": "user", "content": f"Error loading image: {image_path}"})
 
         if message is not None:
             messages.append({"role": "user", "content": [{"type": "text", "text": message}]})
@@ -172,6 +207,19 @@ class ChatInterface:
                                         content={"path": self.display_file_path},
                                     )
                                 )
+                            
+                            # For segmentation tool, display the segmented image
+                            elif tool_name == "chest_xray_segmentation" and isinstance(tool_result, dict):
+                                if "segmentation_image_path" in tool_result:
+                                    segmented_image_path = tool_result["segmentation_image_path"]
+                                    self.display_file_path = segmented_image_path
+                                    chat_history.append(
+                                        ChatMessage(
+                                            role="assistant",
+                                            content={"path": segmented_image_path},
+                                            metadata={"title": "🎯 Segmented Image with Highlighted Areas"}
+                                        )
+                                    )
 
                             yield chat_history, self.display_file_path, ""
 
@@ -181,7 +229,7 @@ class ChatInterface:
                     role="assistant", content=f"❌ Error: {str(e)}", metadata={"title": "Error"}
                 )
             )
-            yield chat_history, self.display_file_path
+            yield chat_history, self.display_file_path,""
 
 
 def create_demo(agent, tools_dict):

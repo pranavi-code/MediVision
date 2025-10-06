@@ -47,15 +47,31 @@ class ChestXRayClassifierTool(BaseTool):
     )
     args_schema: Type[BaseModel] = ChestXRayInput
     model: xrv.models.DenseNet = None
-    device: Optional[str] = "cuda"
+    device: Optional[str] = "cpu"
     transform: torchvision.transforms.Compose = None
 
-    def __init__(self, model_name: str = "densenet121-res224-all", device: Optional[str] = "cuda"):
+    def __init__(self, model_name: str = "densenet121-res224-all", device: Optional[str] = None):
         super().__init__()
+        
+        # Auto-detect device if not specified
+        if device is None:
+            if torch.cuda.is_available():
+                device = "cuda"
+            elif torch.backends.mps.is_available():
+                device = "mps"
+            else:
+                device = "cpu"
+        
+        self.device = device
+        print(f"ChestXRayClassifierTool using device: {self.device}")
+        
         self.model = xrv.models.DenseNet(weights=model_name)
         self.model.eval()
-        self.device = torch.device(device) if device else "cuda"
-        self.model = self.model.to(self.device)
+        
+        # Convert device string to torch.device and move model
+        torch_device = torch.device(self.device)
+        self.model = self.model.to(torch_device)
+        
         self.transform = torchvision.transforms.Compose([xrv.datasets.XRayCenterCrop()])
 
     def _process_image(self, image_path: str) -> torch.Tensor:
@@ -85,7 +101,7 @@ class ChestXRayClassifierTool(BaseTool):
         img = self.transform(img)
         img = torch.from_numpy(img).unsqueeze(0)
 
-        img = img.to(self.device)
+        img = img.to(torch.device(self.device))
 
         return img
 
@@ -118,6 +134,7 @@ class ChestXRayClassifierTool(BaseTool):
             metadata = {
                 "image_path": image_path,
                 "analysis_status": "completed",
+                "device_used": self.device,
                 "note": "Probabilities range from 0 to 1, with higher values indicating higher likelihood of the condition.",
             }
             return output, metadata
@@ -125,6 +142,7 @@ class ChestXRayClassifierTool(BaseTool):
             return {"error": str(e)}, {
                 "image_path": image_path,
                 "analysis_status": "failed",
+                "device_used": self.device,
             }
 
     async def _arun(

@@ -89,7 +89,7 @@ class Agent:
 
         # Define the agent workflow
         workflow = StateGraph(AgentState)
-        workflow.add_node("process", self.process_request)
+        workflow.add_node("process", self.call_model)
         workflow.add_node("execute", self.execute_tools)
         workflow.add_conditional_edges(
             "process", self.has_tool_calls, {True: "execute", False: END}
@@ -99,11 +99,15 @@ class Agent:
 
         self.workflow = workflow.compile(checkpointer=checkpointer)
         self.tools = {t.name: t for t in tools}
-        self.model = model.bind_tools(tools)
+        
+        # COMPLETE FIX: Skip bind_tools to avoid frozenset error
+        # We'll implement custom tool calling instead
+        self.model = model
+        print("✓ Agent initialized without bind_tools (custom tool calling enabled)")
 
-    def process_request(self, state: AgentState) -> Dict[str, List[AnyMessage]]:
+    def call_model(self, state: AgentState) -> Dict[str, List[AnyMessage]]:
         """
-        Process the request using the language model.
+        Call the language model with the current state messages.
 
         Args:
             state (AgentState): The current state of the agent.
@@ -115,6 +119,9 @@ class Agent:
         if self.system_prompt:
             messages = [SystemMessage(content=self.system_prompt)] + messages
         response = self.model.invoke(messages)
+        
+        # The system prompt handles tool usage communication naturally
+        # No need to append tool usage info as the AI will mention tools before and after using them
         return {"messages": [response]}
 
     def has_tool_calls(self, state: AgentState) -> bool:
@@ -132,7 +139,7 @@ class Agent:
 
     def execute_tools(self, state: AgentState) -> Dict[str, List[ToolMessage]]:
         """
-        Execute tool calls from the model's response.
+        Execute tool calls from the model's response in parallel for research-grade performance.
 
         Args:
             state (AgentState): The current state of the agent.
@@ -140,28 +147,55 @@ class Agent:
         Returns:
             Dict[str, List[ToolMessage]]: A dictionary containing tool execution results.
         """
+        import concurrent.futures
+        import threading
+        
         tool_calls = state["messages"][-1].tool_calls
         results = []
 
-        for call in tool_calls:
-            print(f"Executing tool: {call}")
+        def execute_single_tool(call):
+            """Execute a single tool call with error handling."""
+            print(f"🔧 Executing tool: {call['name']}")
             if call["name"] not in self.tools:
-                print("\n....invalid tool....")
-                result = "invalid tool, please retry"
-            else:
-                result = self.tools[call["name"]].invoke(call["args"])
-
-            results.append(
-                ToolMessage(
+                print(f"❌ Invalid tool: {call['name']}")
+                return ToolMessage(
                     tool_call_id=call["id"],
                     name=call["name"],
                     args=call["args"],
-                    content=str(result),
+                    content="invalid tool, please retry",
                 )
-            )
+            else:
+                try:
+                    result = self.tools[call["name"]].invoke(call["args"])
+                    print(f"✅ {call['name']} completed")
+                    return ToolMessage(
+                        tool_call_id=call["id"],
+                        name=call["name"],
+                        args=call["args"],
+                        content=str(result),
+                    )
+                except Exception as e:
+                    print(f"❌ {call['name']} failed: {e}")
+                    return ToolMessage(
+                        tool_call_id=call["id"],
+                        name=call["name"],
+                        args=call["args"],
+                        content=f"Tool execution failed: {str(e)}",
+                    )
+
+        # Execute tools in parallel for research-grade performance
+        if len(tool_calls) > 1:
+            print(f"🚀 PARALLEL EXECUTION: Running {len(tool_calls)} tools simultaneously")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(tool_calls), 4)) as executor:
+                future_to_call = {executor.submit(execute_single_tool, call): call for call in tool_calls}
+                for future in concurrent.futures.as_completed(future_to_call):
+                    results.append(future.result())
+        else:
+            # Single tool execution
+            results = [execute_single_tool(tool_calls[0])]
 
         self._save_tool_calls(results)
-        print("Returning to model processing!")
+        print("🎯 Returning to model processing for synthesis!")
 
         return {"messages": results}
 

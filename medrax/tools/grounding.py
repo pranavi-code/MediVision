@@ -8,11 +8,12 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from transformers import AutoModelForCausalLM, AutoProcessor, BitsAndBytesConfig
-from langchain_core.callbacks import (
-    AsyncCallbackManagerForToolRun,
-    CallbackManagerForToolRun,
-)
-from langchain_core.tools import BaseTool
+# Remove problematic imports that cause frozenset issues
+# from langchain_core.callbacks import (
+#     AsyncCallbackManagerForToolRun,
+#     CallbackManagerForToolRun,
+# )
+# from langchain_core.tools import BaseTool
 
 
 class XRayPhraseGroundingInput(BaseModel):
@@ -29,7 +30,7 @@ class XRayPhraseGroundingInput(BaseModel):
     max_new_tokens: int = Field(default=300, description="Maximum number of new tokens to generate")
 
 
-class XRayPhraseGroundingTool(BaseTool):
+class XRayPhraseGroundingTool:
     """Tool for grounding medical findings in chest X-ray images using the MAIRA-2 model.
 
     This tool processes chest X-ray images and locates specific medical findings mentioned
@@ -63,38 +64,66 @@ class XRayPhraseGroundingTool(BaseTool):
         device: Optional[str] = "cuda",
     ):
         """Initialize the XRay Phrase Grounding Tool."""
-        super().__init__()
+        # Don't call super().__init__() to avoid BaseTool frozenset issues
         self.device = torch.device(device) if device else "cuda"
+        self.model = None
+        self.processor = None
 
-        # Setup quantization config
-        if load_in_4bit:
-            quantization_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.bfloat16,
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_quant_type="nf4",
-            )
-        elif load_in_8bit:
-            quantization_config = BitsAndBytesConfig(
-                load_in_8bit=True,
-            )
-        else:
+        try:
+            print(f"🔄 Loading Maira-2 grounding model from {model_path}...")
+            
+            # Setup quantization config
             quantization_config = None
+            if load_in_4bit:
+                quantization_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type="nf4",
+                )
+            elif load_in_8bit:
+                quantization_config = BitsAndBytesConfig(
+                    load_in_8bit=True,
+                )
 
-        # Load model
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_path,
-            device_map=self.device,
-            cache_dir=cache_dir,
-            trust_remote_code=True,
-            quantization_config=quantization_config,
-        )
-        self.processor = AutoProcessor.from_pretrained(
-            model_path, cache_dir=cache_dir, trust_remote_code=True
-        )
+            # Try to load Maira-2 with proper authentication handling
+            try:
+                self.model = AutoModelForCausalLM.from_pretrained(
+                    model_path,
+                    device_map=self.device,
+                    cache_dir=cache_dir,
+                    trust_remote_code=True,
+                    quantization_config=quantization_config,
+                    torch_dtype=torch.float32 if str(self.device) == "cpu" else torch.bfloat16
+                )
+                self.processor = AutoProcessor.from_pretrained(
+                    model_path, 
+                    cache_dir=cache_dir, 
+                    trust_remote_code=True
+                )
+                
+                if self.model:
+                    self.model = self.model.eval()
+                    print(f"✅ Maira-2 grounding model loaded successfully")
+                else:
+                    raise Exception("Model loading returned None")
+                
+            except Exception as auth_error:
+                if "gated repo" in str(auth_error) or "401" in str(auth_error) or "403" in str(auth_error):
+                    print(f"❌ Maira-2 requires authentication:")
+                    print(f"   1. Visit: https://huggingface.co/microsoft/maira-2")
+                    print(f"   2. Request access and wait for approval")
+                    print(f"   3. Run: huggingface-cli login")
+                    print(f"🔄 Creating fallback grounding tool for now...")
+                    raise auth_error
+                else:
+                    raise auth_error
 
-        
-        self.model = self.model.eval()
+        except Exception as e:
+            print(f"❌ Maira-2 grounding model loading failed: {e}")
+            # Create dummy placeholders to prevent complete failure
+            self.model = None
+            self.processor = None
 
         self.temp_dir = Path(temp_dir if temp_dir else tempfile.mkdtemp())
         self.temp_dir.mkdir(exist_ok=True)
@@ -131,12 +160,20 @@ class XRayPhraseGroundingTool(BaseTool):
 
         return str(viz_path)
 
+    def run(self, image_path: str, phrase: str, max_new_tokens: int = 300) -> str:
+        """Simple run method for agent compatibility"""
+        try:
+            result, metadata = self._run(image_path, phrase, max_new_tokens)
+            return str(result)
+        except Exception as e:
+            return f"Grounding tool error: {str(e)}"
+
     def _run(
         self,
         image_path: str,
         phrase: str,
         max_new_tokens: int = 300,
-        run_manager: Optional[CallbackManagerForToolRun] = None,
+        run_manager: Optional[Any] = None,
     ) -> Tuple[Dict[str, Any], Dict]:
         """Ground a medical finding phrase in an X-ray image.
 
@@ -149,6 +186,25 @@ class XRayPhraseGroundingTool(BaseTool):
         Returns:
             Tuple[Dict, Dict]: Output dictionary and metadata dictionary
         """
+        # Check if model loaded successfully
+        if self.model is None or self.processor is None:
+            fallback_output = {
+                "phrase": phrase,
+                "bounding_boxes": [],
+                "visualization_path": None,
+                "confidence": 0.0,
+                "status": "model_unavailable",
+                "message": "Maira-2 grounding model is not available. This may be due to authentication requirements or model access restrictions."
+            }
+            metadata = {
+                "image_path": image_path,
+                "phrase": phrase,
+                "analysis_status": "model_unavailable",
+                "fallback_used": True,
+                "suggestion": "For medical finding localization, consider using other available analysis tools."
+            }
+            return fallback_output, metadata
+            
         try:
             image = Image.open(image_path)
             if image.mode != "RGB":
@@ -245,7 +301,7 @@ class XRayPhraseGroundingTool(BaseTool):
         self,
         image_path: str,
         phrase: str,
-        run_manager: Optional[AsyncCallbackManagerForToolRun] = None,
+        run_manager: Optional[Any] = None,
     ) -> Tuple[Dict[str, Any], Dict]:
         """Asynchronous version of _run."""
-        return self._run(image_path, phrase, run_manager)
+        return self._run(image_path, phrase)
