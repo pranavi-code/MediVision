@@ -1,3 +1,6 @@
+/* Import Inter font MUST be first for Vite CSS */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -67,6 +70,17 @@ All colors MUST be HSL.
     --sidebar-border: 220 13% 91%;
 
     --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Gradio-like chat tokens (tune these for exact parity) */
+    --gr-font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+    --gr-primary: 217 91% 60%;
+    --gr-primary-foreground: 0 0% 100%;
+    --gr-assistant-bg: 0 0% 100%;
+    --gr-assistant-fg: 240 6% 12%;
+    --gr-assistant-border: 225 14% 90%;
+    --gr-time-fg: 224 10% 40%;
+    --gr-radius: 12px;
+    --gr-shadow-elev: 0 6px 18px rgba(16,24,40,0.06);
   }
 
   .dark {
@@ -121,5 +135,157 @@ All colors MUST be HSL.
 
   body {
     @apply bg-background text-foreground;
+    /* Use Inter for a clean modern UI similar to Gradio */
+    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
+}
+
+/* Inter font already imported at top to satisfy Vite CSS ordering */
+
+@layer utilities {
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .animate-fade-in {
+    animation: fade-in 160ms ease-out;
+  }
+
+  /* Thin custom scrollbar for chat area */
+  .thin-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .thin-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .thin-scrollbar::-webkit-scrollbar-thumb {
+    background-color: rgba(100,100,110,0.25);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  .thin-scrollbar::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(100,100,110,0.4);
+  }
+}
+
+/* Gradio-like chat bubble and UI helpers */
+@layer components {
+  .bubble-slide-in {
+    animation: fade-in 180ms ease-out;
+  }
+
+  .gr-bubble-user {
+    background: hsl(var(--gr-primary));
+    color: hsl(var(--gr-primary-foreground));
+    border-radius: calc(var(--gr-radius) + 2px);
+    padding: 12px 14px;
+    box-shadow: var(--gr-shadow-elev);
+  }
+
+  .gr-bubble-assistant {
+    background: hsl(var(--gr-assistant-bg));
+    color: hsl(var(--gr-assistant-fg));
+    border-radius: var(--gr-radius);
+    padding: 12px 14px;
+    border: 1px solid hsl(var(--gr-assistant-border));
+  }
+
+  .gr-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 9999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .gr-message-time {
+    font-size: 11px;
+    color: hsl(var(--gr-time-fg));
+    opacity: .85;
+    margin-top: 6px;
+  }
+
+  .gr-input-area {
+    padding: 12px;
+  }
+
+  .gr-preview-card img {
+    max-width: 100%;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(16,24,40,0.08);
+  }
+}
+
+/* Bubble tails */
+@layer components {
+  .gr-bubble-assistant {
+    position: relative;
+  }
+  .gr-bubble-assistant::after {
+    content: '';
+    position: absolute;
+    left: -8px;
+    top: 12px;
+    width: 0;
+    height: 0;
+    border-top: 8px solid transparent;
+    border-bottom: 8px solid transparent;
+  border-right: 8px solid hsl(var(--gr-assistant-bg));
+    filter: drop-shadow(0 1px 0 rgba(0,0,0,0.02));
+  }
+
+  .gr-bubble-user {
+    position: relative;
+  }
+  .gr-bubble-user::after {
+    content: '';
+    position: absolute;
+    right: -8px;
+    top: 12px;
+    width: 0;
+    height: 0;
+    border-top: 8px solid transparent;
+    border-bottom: 8px solid transparent;
+  border-left: 8px solid hsl(var(--gr-primary));
+    filter: drop-shadow(0 1px 0 rgba(0,0,0,0.02));
+  }
+
+  /* Typing indicator (three dots) */
+  .typing-dots {
+    display: inline-flex;
+    gap: 4px;
+    align-items: center;
+    height: 14px;
+  }
+  .typing-dots span {
+    width: 6px;
+    height: 6px;
+    background: rgba(0,0,0,0.45);
+    border-radius: 9999px;
+    display: inline-block;
+    transform: translateY(0);
+    animation: typing-bounce 1s infinite ease-in-out;
+  }
+  .typing-dots span:nth-child(2) { animation-delay: 0.12s; }
+  .typing-dots span:nth-child(3) { animation-delay: 0.24s; }
+
+  @keyframes typing-bounce {
+    0%, 80%, 100% { transform: translateY(0); opacity: 0.6; }
+    40% { transform: translateY(-6px); opacity: 1; }
+  }
+
+  /* Firefox scrollbar */
+  .thin-scrollbar {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(100,100,110,0.25) transparent;
+  }
+
+  /* Grouped message tweaks */
+  .msg-grouped { margin-top: 6px !important; }
 }
