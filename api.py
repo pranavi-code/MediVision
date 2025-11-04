@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from gradio import ChatMessage  # for consistent history objects
 from medrax.utils.jwt import verify_jwt
 import time
 from pathlib import Path
@@ -52,6 +53,41 @@ def _require_auth(authorization: Optional[str]):
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid token")
     return payload
+
+# ------------------------------
+# Role Personas (server-enforced)
+# ------------------------------
+# Keep concise and avoid rigid markdown structures; adapt to question.
+PERSONAS: Dict[str, str] = {
+    "doctor": (
+        "You are assisting a licensed clinician. Use precise clinical framing and appropriate medical terminology. "
+        "Respond directly to the clinician’s question. Start with a one‑line takeaway, then provide key findings as short clinical bullets (no markdown headers). "
+        "Use any imaging-analysis tools internally when an image is present, but do not mention tool names, calls, or raw outputs in your reply. Synthesize results in plain language. "
+        "Only conclude 'no acute cardiopulmonary process' if the classifier probabilities for major pathologies (Effusion, Pneumonia, Pneumothorax, Consolidation, Edema) are all below ~0.15; otherwise discuss likely findings with probabilities. "
+        "Include a small 'Findings:' block listing up to the top 3 pathologies with probability ≥ 0.15 in the format 'Label p=0.xx'. If none exceed threshold, write 'Findings: No pathologies exceeded threshold (0.15)'. Then include 'Impression:' as a one-line clinical summary tailored to the question. "
+        "After the Impression, add a brief explanation (2–5 concise bullets) using medical terms to justify the interpretation: distribution/laterality and lobar involvement, pattern (e.g., alveolar consolidation with air bronchograms vs interstitial), pleural findings (e.g., costophrenic angle blunting, meniscus sign), cardiac/mediastinal contours, support devices, and relevant technical factors. Where reasonable, list 1–3 differentials and suggest targeted next steps (e.g., repeat CXR, bedside ultrasound, CT, labs, empiric therapy) without mentioning tools. "
+        "Avoid walkthroughs, code blocks, or step‑by‑step tool descriptions. If uncertain, state uncertainty briefly and propose next steps."
+    ),
+    "patient": (
+        "You are explaining to a patient or caregiver. Use plain language, avoid jargon, and keep a gentle, reassuring tone. "
+        "Be comprehensive: explain what the image and findings mean, potential causes, and what to watch for. "
+        "When an image is present, rely on tool outputs (dicom_processor if needed, chest_xray_classifier, and optionally segmentation) and translate them into plain language. "
+        "Provide practical next steps and safety guidance without diagnosing; include a clear disclaimer to consult a healthcare professional for diagnosis. "
+        "Use short paragraphs or simple bullets (no markdown headers)."
+    ),
+    "general": (
+        "Teaching mode for a student/learner. Provide detailed, step-by-step reasoning with correct terminology. "
+        "When an image is present, demonstrate tool-first analysis (dicom_processor if needed, chest_xray_classifier, optional segmentation), explain the outputs, thresholds, and uncertainty. "
+        "Include a small 'Findings:' block listing up to the top 3 pathologies with probability ≥ 0.15 in the format 'Label p=0.xx'. If none exceed threshold, write 'Findings: No pathologies exceeded threshold (0.15)'. Then include 'Impression:' as a one-line summary. "
+        "Define important terms briefly and provide structured explanations without using markdown headers. Adapt structure to the question and avoid hallucinations by relying on the provided image/context and tool outputs."
+    ),
+}
+
+def _persona_text(role: Optional[str]) -> str:
+    key = (role or "").lower()
+    if key in PERSONAS:
+        return f"[Persona::{key}] " + PERSONAS[key]
+    return "[Persona::general] " + PERSONAS["general"]
 
 # CORS for React frontend
 app.add_middleware(
@@ -252,7 +288,7 @@ async def initialize_medrax():
                         temp_dir=str(temp_dir),
                         device=("cuda" if os.getenv("CUDA_AVAILABLE", "false").lower() == "true" else "cpu"),
                         model=model_name,
-                        temperature=0.2,
+                        temperature=0.1,
                         ollama_kwargs=ollama_kwargs,
                     )
                     _log("INFO", f"✅ Initialized agent with {model_name}")
@@ -368,23 +404,127 @@ async def upload_file(file: UploadFile = File(...), case_id: Optional[str] = For
 
 
 def _serialize_msg(msg) -> Dict[str, Any]:
-    # support pydantic-like model_dump or a simple object with role/content
+    """Serialize ChatMessage-like objects or simple dicts for persistence/streaming."""
+    # gradio.ChatMessage or pydantic-like
     if hasattr(msg, "model_dump"):
         try:
             return msg.model_dump()
         except Exception:
             pass
-    return {"role": getattr(msg, "role", None), "content": getattr(msg, "content", None), "metadata": getattr(msg, "metadata", None)}
+    # Support dict-based messages
+    if isinstance(msg, dict):
+        return {
+            "role": msg.get("role"),
+            "content": msg.get("content"),
+            "metadata": msg.get("metadata"),
+        }
+    # Fallback getattr
+    return {
+        "role": getattr(msg, "role", None),
+        "content": getattr(msg, "content", None),
+        "metadata": getattr(msg, "metadata", None),
+    }
 
 
 def sse_event(data: str) -> str:
     return f"data: {data}\n\n"
 
 
-async def _chat_stream_generator(message: str, image_path: Optional[str], thread_id: str):
+async def _chat_stream_generator(message: str, image_path: Optional[str], thread_id: str, user_payload: Optional[Dict[str, Any]] = None, case_id: Optional[str] = None):
     """Internal generator that proxies ChatInterface.process_message to SSE JSON events."""
     try:
+        def _strip_persona_prefix(txt: Optional[str]) -> str:
+            if not txt:
+                return ""
+            # If message was prefixed with persona (e.g., "[Persona::role]...\n\n<user text>"), drop the persona
+            if txt.startswith("[Persona::"):
+                parts = txt.split("\n\n", 1)
+                if len(parts) == 2:
+                    return parts[1]
+            return txt
+
         history = chat_sessions.get(thread_id, {}).get("history", [])
+
+        # Ensure user's turn is represented in server history before assistant streams
+        pre_msgs = []
+        if image_path:
+            # Use simple dicts for history to ensure role/content persist correctly.
+            img_entry = {"path": image_path}
+            try:
+                disp = getattr(chat_interface, "display_file_path", None)
+                if disp:
+                    img_entry["display_path"] = disp
+            except Exception:
+                pass
+            pre_msgs.append({"role": "user", "content": img_entry})
+        if message:
+            pre_msgs.append({"role": "user", "content": _strip_persona_prefix(message)})
+        if pre_msgs:
+            history = history + pre_msgs
+            chat_sessions.setdefault(thread_id, {})["history"] = history
+            # Persist immediately (best-effort) so restored threads include user's messages
+            try:
+                if user_payload:
+                    from medrax.utils.database import get_db
+                    db = get_db()
+                    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+                    doc = {
+                        "userId": str(user_payload.get("sub")),
+                        "role": user_payload.get("role"),
+                        "threadId": thread_id,
+                        "caseId": case_id,
+                        "messages": [_serialize_msg(m) for m in history],
+                        "display_path": getattr(chat_interface, "display_file_path", None),
+                        "updatedAt": now_iso,
+                        "lastMessageAt": now_iso,
+                    }
+                    await db["chat_threads"].update_one(
+                        {"userId": doc["userId"], "threadId": thread_id},
+                        {"$set": doc, "$setOnInsert": {"createdAt": now_iso}},
+                        upsert=True,
+                    )
+            except Exception:
+                pass
+
+        # Special-case: greetings without image — reply succinctly and do NOT call tools
+        user_text = _strip_persona_prefix(message)
+        if (not image_path) and user_text and len(user_text.strip()) <= 40:
+            import re
+            if re.search(r"\b(hi|hello|hey|good\s*(morning|evening|afternoon))\b", user_text.strip(), re.I):
+                assist = {"role": "assistant", "content": "Hello! How can I help you today? If you have a chest X-ray, you can upload it and I’ll analyze it."}
+                history = history + [assist]
+                chat_sessions.setdefault(thread_id, {})["history"] = history
+                response_data = {
+                    "thread_id": thread_id,
+                    "messages": history,
+                    "display_path": getattr(chat_interface, "display_file_path", None),
+                    "status": "completed",
+                }
+                # Persist
+                try:
+                    if user_payload:
+                        from medrax.utils.database import get_db
+                        db = get_db()
+                        now_iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+                        doc = {
+                            "userId": str(user_payload.get("sub")),
+                            "role": user_payload.get("role"),
+                            "threadId": thread_id,
+                            "caseId": case_id,
+                            "messages": response_data["messages"],
+                            "display_path": response_data["display_path"],
+                            "updatedAt": now_iso,
+                            "lastMessageAt": now_iso,
+                        }
+                        await db["chat_threads"].update_one(
+                            {"userId": doc["userId"], "threadId": thread_id},
+                            {"$set": doc, "$setOnInsert": {"createdAt": now_iso}},
+                            upsert=True,
+                        )
+                except Exception:
+                    pass
+                yield sse_event(json.dumps(response_data))
+                return
 
         async for updated_history, display_path, _ in chat_interface.process_message(message, image_path, history):
             # Update session history
@@ -397,6 +537,32 @@ async def _chat_stream_generator(message: str, image_path: Optional[str], thread
                 "status": "streaming",
             }
 
+            # Persist chat history incrementally (best-effort; non-blocking on failure)
+            try:
+                if user_payload:
+                    from medrax.utils.database import get_db
+                    db = get_db()
+                    now_iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+                    doc = {
+                        "userId": str(user_payload.get("sub")),
+                        "role": user_payload.get("role"),
+                        "threadId": thread_id,
+                        "caseId": case_id,
+                        "messages": response_data["messages"],
+                        "display_path": display_path,
+                        "updatedAt": now_iso,
+                        "lastMessageAt": now_iso,
+                    }
+                    # Upsert by (userId, threadId)
+                    await db["chat_threads"].update_one(
+                        {"userId": doc["userId"], "threadId": thread_id},
+                        {"$set": doc, "$setOnInsert": {"createdAt": now_iso}},
+                        upsert=True,
+                    )
+            except Exception as _e:
+                # Do not disrupt streaming if DB is unavailable
+                pass
+
             yield sse_event(json.dumps(response_data))
 
         # final
@@ -406,6 +572,25 @@ async def _chat_stream_generator(message: str, image_path: Optional[str], thread
             "display_path": getattr(chat_interface, "display_file_path", None),
             "status": "completed",
         }
+        # Final persist to ensure completion state is saved
+        try:
+            if user_payload:
+                from medrax.utils.database import get_db
+                db = get_db()
+                now_iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+                await db["chat_threads"].update_one(
+                    {"userId": str(user_payload.get("sub")), "threadId": thread_id},
+                    {"$set": {
+                        "messages": final["messages"],
+                        "display_path": final["display_path"],
+                        "updatedAt": now_iso,
+                        "lastMessageAt": now_iso,
+                        "caseId": case_id,
+                    }, "$setOnInsert": {"createdAt": now_iso}},
+                    upsert=True,
+                )
+        except Exception:
+            pass
         yield sse_event(json.dumps(final))
 
     except Exception as e:
@@ -422,7 +607,7 @@ async def chat_endpoint(message: str = Form(...), image_path: Optional[str] = Fo
 
     The endpoint lazy-initializes the MedRAX backend if needed.
     """
-    _require_auth(Authorization)
+    payload = _require_auth(Authorization)
     await initialize_medrax()
     if initialization_error:
         _log("WARN", "Initialization failed - falling back to mock stream for chat")
@@ -447,6 +632,13 @@ async def chat_endpoint(message: str = Form(...), image_path: Optional[str] = Fo
         except Exception:
             pass
 
+    # Inject persona based on JWT role without changing response shape
+    try:
+        persona = _persona_text(payload.get("role"))
+        message = f"{persona}\n\n" + (message or "")
+    except Exception:
+        pass
+
     tid = thread_id or str(time.time())
     # ensure session exists
     chat_sessions.setdefault(tid, {"history": [], "created_at": time.time()})
@@ -456,7 +648,7 @@ async def chat_endpoint(message: str = Form(...), image_path: Optional[str] = Fo
     except Exception:
         pass
 
-    return StreamingResponse(_chat_stream_generator(message, image_path, tid), media_type="text/event-stream")
+    return StreamingResponse(_chat_stream_generator(message, image_path, tid, payload, case_id), media_type="text/event-stream")
 
 
 @app.get("/api/logs")
@@ -500,12 +692,20 @@ async def _mock_stream_generator(message: str, image_path: Optional[str], thread
 
 @app.post("/api/chat/stream")
 async def chat_stream_api(chat_msg: ChatMessage, Authorization: Optional[str] = Header(None)):
-    _require_auth(Authorization)
+    payload = _require_auth(Authorization)
     # alias route for compatibility with older clients
     await initialize_medrax()
     if initialization_error:
         _log("WARN", "Initialization failed - falling back to mock stream for chat (api/chat/stream)")
         return StreamingResponse(_mock_stream_generator(chat_msg.message or "", chat_msg.image_path, str(time.time())), media_type="text/event-stream")
+
+    # Persona injection
+    try:
+        persona = _persona_text(payload.get("role"))
+        if chat_msg and chat_msg.message:
+            chat_msg.message = f"{persona}\n\n" + (chat_msg.message or "")
+    except Exception:
+        pass
 
     tid = chat_msg.thread_id or str(time.time())
     chat_sessions.setdefault(tid, {"history": [], "created_at": time.time()})
@@ -514,7 +714,7 @@ async def chat_stream_api(chat_msg: ChatMessage, Authorization: Optional[str] = 
     except Exception:
         pass
 
-    return StreamingResponse(_chat_stream_generator(chat_msg.message or "", chat_msg.image_path, tid), media_type="text/event-stream")
+    return StreamingResponse(_chat_stream_generator(chat_msg.message or "", chat_msg.image_path, tid, payload, None), media_type="text/event-stream")
 
 
 @app.post("/api/chat/clear")
@@ -530,6 +730,14 @@ async def clear_chat(thread_id: str = Form(...), Authorization: Optional[str] = 
                 chat_interface.display_file_path = None
             except Exception:
                 pass
+        # Also delete persisted thread (best-effort)
+        try:
+            payload = _require_auth(Authorization)
+            from medrax.utils.database import get_db
+            db = get_db()
+            await db["chat_threads"].delete_one({"userId": str(payload.get("sub")), "threadId": thread_id})
+        except Exception:
+            pass
 
         return {"success": True, "thread_id": thread_id}
     except Exception as e:
@@ -561,6 +769,60 @@ async def root():
             "health": "/api/health",
         },
     }
+
+
+# --------------------------
+# Chat history API (optional)
+# --------------------------
+@app.get("/api/chat/threads")
+async def list_chat_threads(limit: int = 50, Authorization: Optional[str] = Header(None)):
+    payload = _require_auth(Authorization)
+    try:
+        from medrax.utils.database import get_db
+        db = get_db()
+        cur = db["chat_threads"].find({"userId": str(payload.get("sub"))}).sort("updatedAt", -1).limit(max(1, min(200, limit)))
+        items = []
+        async for d in cur:
+            d["_id"] = str(d.get("_id"))
+            # Avoid returning huge histories in list view
+            d.pop("messages", None)
+            items.append(d)
+        return {"items": items}
+    except Exception as e:
+        # If DB is unavailable, return empty list instead of failing
+        return {"items": [], "error": str(e)}
+
+
+@app.get("/api/chat/threads/{thread_id}")
+async def get_chat_thread(thread_id: str, Authorization: Optional[str] = Header(None)):
+    payload = _require_auth(Authorization)
+    try:
+        from medrax.utils.database import get_db
+        db = get_db()
+        d = await db["chat_threads"].find_one({"userId": str(payload.get("sub")), "threadId": thread_id})
+        if not d:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        d["_id"] = str(d.get("_id"))
+        return d
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/chat/threads/{thread_id}")
+async def delete_chat_thread(thread_id: str, Authorization: Optional[str] = Header(None)):
+    payload = _require_auth(Authorization)
+    try:
+        from medrax.utils.database import get_db
+        db = get_db()
+        await db["chat_threads"].delete_one({"userId": str(payload.get("sub")), "threadId": thread_id})
+        # Also clear in-memory if present
+        if thread_id in chat_sessions:
+            chat_sessions[thread_id]["history"] = []
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
