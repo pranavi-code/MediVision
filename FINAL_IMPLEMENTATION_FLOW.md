@@ -94,7 +94,7 @@ Case ID: CX2024001
 
 2. **Basic Authentication**
    - Simple login for each role
-   - JWT tokens for session
+   -  tokens for session
 
 ### PHASE 2: Admin Dashboard (1 hour)
 3. **Case Creation Form**
