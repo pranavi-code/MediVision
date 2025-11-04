@@ -28,6 +28,7 @@ import AdminLayout from "./components/AdminLayout";
 
 // Patient pages
 import PatientLayout from "./components/PatientLayout";
+import { Toaster } from "@/components/ui/toaster";
 import PatientDashboard from "./pages/patient/PatientDashboard";
 import PatientCases from "./pages/patient/PatientCases";
 import CaseView from "./pages/patient/CaseView";
@@ -36,15 +37,8 @@ const App = () => (
   <AuthProvider>
     <BrowserRouter>
       <Routes>
-        {/* Optionally protect landing too: wrap to force login before viewing */}
-        <Route
-          path="/"
-          element={
-            <RequireRole>
-              <Landing />
-            </RequireRole>
-          }
-        />
+        {/* Public Landing page (no auth) */}
+        <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
         <Route
@@ -159,6 +153,7 @@ const App = () => (
 
         <Route path="*" element={<NotFound />} />
       </Routes>
+      <Toaster />
     </BrowserRouter>
   </AuthProvider>
 );

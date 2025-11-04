@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { useEffect, useMemo, useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Link, useNavigate } from "react-router-dom";
+import { useToast } from "@/hooks/use-toast";
 
 type CaseItem = {
   _id: string;
@@ -17,6 +18,7 @@ type CaseItem = {
 export default function DoctorDashboard() {
   const { user, logout, token } = useAuth();
   const nav = useNavigate();
+  const { toast } = useToast();
   const [cases, setCases] = useState<CaseItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeCase, setActiveCase] = useState<CaseItem | null>(null);
@@ -120,6 +122,7 @@ export default function DoctorDashboard() {
         setActiveCase(a => a ? { ...a, ai_analysis: d.analysis } : a);
         // also refresh list
         loadCases();
+        toast({ title: "Analysis Completed", description: "AI analysis is ready for this case." });
       }
     } finally {
       setAnalyzing(null);
@@ -134,6 +137,7 @@ export default function DoctorDashboard() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ history: historyText, symptoms: symptomsText })
       });
+      toast({ title: "Case Details Saved" });
     } catch {}
   }
 
@@ -177,6 +181,7 @@ export default function DoctorDashboard() {
           const dj = await fetch(`http://localhost:8585/api/doctor/cases/${activeCase.caseId}/reports`, { headers: { Authorization: `Bearer ${token}` } });
           const rr = await dj.json();
           setReports(rr.items || []);
+          toast({ title: finalize ? "Report Finalized" : "Draft Saved" });
         }
       } else {
         const res = await fetch(`http://localhost:8585/api/doctor/cases/${activeCase.caseId}/reports`, {
@@ -188,6 +193,7 @@ export default function DoctorDashboard() {
           const dj = await fetch(`http://localhost:8585/api/doctor/cases/${activeCase.caseId}/reports`, { headers: { Authorization: `Bearer ${token}` } });
           const rr = await dj.json();
           setReports(rr.items || []);
+          toast({ title: finalize ? "Report Finalized" : "Draft Saved" });
         }
       }
     } finally {
@@ -227,7 +233,7 @@ export default function DoctorDashboard() {
           </div>
           <div className="flex items-center gap-4 text-sm text-muted-foreground">
             <Link to="/upload" className="underline">MedRAX Assistant</Link>
-            <span>{user?.name} · {user?.email}</span>
+            <span>{(user?.name && !user.name.includes("@")) ? `Dr. ${user.name}` : (user?.email ? `Dr. ${user.email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, c=>c.toUpperCase())}` : "Doctor")}</span>
             <Button variant="outline" size="sm" onClick={() => { logout(); nav("/login"); }}>Logout</Button>
           </div>
         </div>
@@ -356,6 +362,7 @@ export default function DoctorDashboard() {
                         if (res.ok) {
                           const di = await res.json();
                           setImages(prev => [di.image, ...prev]);
+                          toast({ title: "Image Uploaded", description: `${f.name} uploaded successfully.` });
                         }
                       } finally {
                         setUploading(false);

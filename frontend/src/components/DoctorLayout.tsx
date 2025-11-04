@@ -48,6 +48,20 @@ export default function DoctorLayout({ children }: { children: React.ReactNode }
     navigate("/login");
   };
 
+  const doctorDisplay = (() => {
+    const name = user?.name?.trim();
+    if (name && !name.includes("@")) return `Dr. ${name}`;
+    const email = user?.email?.trim() || "";
+    if (email) {
+      const prefix = email.split("@")[0] || "";
+      if (prefix) {
+        const formatted = prefix.replace(/[._-]+/g, " ").split(/\s+/).filter(Boolean).map(w => w.charAt(0).toUpperCase()+w.slice(1)).join(" ");
+        return formatted ? `Dr. ${formatted}` : "Doctor";
+      }
+    }
+    return "Doctor";
+  })();
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -75,7 +89,7 @@ export default function DoctorLayout({ children }: { children: React.ReactNode }
 
           <div className="flex items-center gap-4">
             <div className="text-sm text-muted-foreground hidden sm:block">
-              Dr. {user?.name || user?.email}
+              {doctorDisplay}
             </div>
             <Button variant="outline" size="sm" onClick={handleLogout}>
               <LogOut className="h-4 w-4 mr-2" />

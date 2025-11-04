@@ -29,6 +29,15 @@ export default function PatientCases() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
 
+  const formatDoctorName = (doc?: { name?: string; email?: string }) => {
+    const n = (doc?.name || "").trim();
+    if (n && !n.includes("@")) return n;
+    const e = (doc?.email || n || "").trim();
+    const prefix = e.split("@")[0] || "";
+    if (!prefix) return "Doctor";
+    return prefix.replace(/[._-]+/g, " ").split(/\s+/).filter(Boolean).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  };
+
   useEffect(() => {
     async function fetchCases() {
       if (!token) return;
@@ -139,12 +148,12 @@ export default function PatientCases() {
         ) : (
           filteredCases.map((case_) => (
             <Card key={case_._id} className="hover:shadow-md transition-shadow">
-              <CardContent className="p-6">
-                <div className="flex items-start justify-between">
-                  <div className="space-y-3 flex-1">
+              <CardContent className="p-6 min-h-[120px] flex">
+                <div className="w-full flex flex-col md:flex-row items-center md:items-center justify-between gap-4">
+                  <div className="space-y-3 flex-1 min-w-0 self-center">
                     {/* Case ID */}
                     <div className="flex items-center gap-3">
-                      <h3 className="text-lg font-semibold">{case_.caseId}</h3>
+                      <h3 className="text-lg font-semibold break-words">{case_.caseId}</h3>
                       {case_.reports && case_.reports.some(r => r.status === "final") && (
                         <span className="text-xs text-green-600">Report Available</span>
                       )}
@@ -152,20 +161,20 @@ export default function PatientCases() {
 
                     {/* Description */}
                     {case_.description && (
-                      <p className="text-muted-foreground">{case_.description}</p>
+                      <p className="text-muted-foreground break-words">{case_.description}</p>
                     )}
 
                     {/* Case Details */}
-                    <div className="grid gap-4 md:grid-cols-3">
+                    <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3">
                       <div className="flex items-center gap-2 text-sm text-muted-foreground">
                         <Calendar className="w-4 h-4" />
                         Created: {formatDate(case_.createdAt || "")}
                       </div>
-                      
-                      {case_.assignedDoctor?.name && (
+
+                      {(case_.assignedDoctor?.name || case_.assignedDoctor as any) && (
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                           <User className="w-4 h-4" />
-                          Dr. {case_.assignedDoctor.name}
+                          Dr. {formatDoctorName(case_.assignedDoctor as any)}
                         </div>
                       )}
                       {/* Images count */}
@@ -176,7 +185,7 @@ export default function PatientCases() {
                   </div>
 
                   {/* Actions */}
-                  <div className="flex flex-col gap-2 ml-4">
+                  <div className="flex flex-row md:flex-col gap-2 md:ml-4 self-center">
                     <Button variant="outline" size="sm" asChild>
                       <a href={`/patient/cases/${case_.caseId}`}>
                         <Eye className="w-4 h-4 mr-1" />

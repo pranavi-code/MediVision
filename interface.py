@@ -67,10 +67,28 @@ class ChatInterface:
             if suffix == ".dcm":
                 if "DicomProcessorTool" in self.tools_dict:
                     output, _ = self.tools_dict["DicomProcessorTool"]._run(str(saved_path))
-                    self.display_file_path = output["image_path"]
+                    # Tool may return an error dictionary on failure
+                    if isinstance(output, dict) and output.get("image_path"):
+                        self.display_file_path = output["image_path"]
+                    else:
+                        raise RuntimeError("DICOM tool returned no image_path")
                 else:
-                    print("DicomProcessorTool not available for DICOM processing")
-                    return None
+                    # Fallback: minimal local conversion so UI preview always works
+                    try:
+                        import pydicom  # type: ignore
+                        import numpy as np  # type: ignore
+                        from PIL import Image  # type: ignore
+                        dcm = pydicom.dcmread(str(saved_path))
+                        img = dcm.pixel_array.astype(float)
+                        # Simple min-max normalize to 0-255
+                        img = ((img - img.min()) / (max(img.max() - img.min(), 1e-6)) * 255).astype(np.uint8)
+                        out_path = self.upload_dir / f"fallback_{timestamp}.png"
+                        Image.fromarray(img).save(out_path)
+                        self.display_file_path = str(out_path)
+                        print("DICOM fallback conversion used for display preview")
+                    except Exception as conv_e:
+                        print(f"DicomProcessorTool not available and fallback failed: {conv_e}")
+                        return None
             else:
                 self.display_file_path = str(saved_path)
 
@@ -174,8 +192,13 @@ class ChatInterface:
                     if "process" in event:
                         content = event["process"]["messages"][-1].content
                         if content:
+                            # Remove tool-call style lines and headings from the model output
                             content = re.sub(r"temp/[^\s]*", "", content)
-                            chat_history.append(ChatMessage(role="assistant", content=content))
+                            # Drop bracketed log lines like: [Calling ...] or [tool output: ...]
+                            content = re.sub(r"^\s*\[[^\]]+\]\s*$", "", content, flags=re.MULTILINE)
+                            # Trim markdown headers used by some models
+                            content = re.sub(r"^\s*#+\s*", "", content, flags=re.MULTILINE)
+                            chat_history.append(ChatMessage(role="assistant", content=content.strip()))
                             yield chat_history, self.display_file_path, ""
 
                     elif "execute" in event:
@@ -183,43 +206,19 @@ class ChatInterface:
                             tool_name = message.name
                             tool_result = eval(message.content)[0]
 
-                            if tool_result:
-                                metadata = {"title": f"🖼️ Image from tool: {tool_name}"}
-                                formatted_result = " ".join(
-                                    line.strip() for line in str(tool_result).splitlines()
-                                ).strip()
-                                metadata["description"] = formatted_result
-                                chat_history.append(
-                                    ChatMessage(
-                                        role="assistant",
-                                        content=formatted_result,
-                                        metadata=metadata,
-                                    )
-                                )
+                            # Suppress textual tool result messages; only update images silently
+                            if tool_name == "image_visualizer" and isinstance(tool_result, dict):
+                                if tool_result.get("image_path"):
+                                    self.display_file_path = tool_result["image_path"]
+                                    chat_history.append(ChatMessage(role="assistant", content={"path": self.display_file_path}))
 
-                            # For image_visualizer, use display path
-                            if tool_name == "image_visualizer":
-                                self.display_file_path = tool_result["image_path"]
-                                chat_history.append(
-                                    ChatMessage(
-                                        role="assistant",
-                                        # content=gr.Image(value=self.display_file_path),
-                                        content={"path": self.display_file_path},
-                                    )
-                                )
-                            
-                            # For segmentation tool, display the segmented image
                             elif tool_name == "chest_xray_segmentation" and isinstance(tool_result, dict):
-                                if "segmentation_image_path" in tool_result:
+                                if tool_result.get("segmentation_image_path"):
                                     segmented_image_path = tool_result["segmentation_image_path"]
                                     self.display_file_path = segmented_image_path
-                                    chat_history.append(
-                                        ChatMessage(
-                                            role="assistant",
-                                            content={"path": segmented_image_path},
-                                            metadata={"title": "🎯 Segmented Image with Highlighted Areas"}
-                                        )
-                                    )
+                                    chat_history.append(ChatMessage(role="assistant", content={"path": segmented_image_path}))
+
+                            # Other tools: no direct textual emission to user; keep UI clean
 
                             yield chat_history, self.display_file_path, ""
 

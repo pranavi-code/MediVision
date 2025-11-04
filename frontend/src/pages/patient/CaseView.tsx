@@ -8,7 +8,18 @@ import { Separator } from "@/components/ui/separator";
 import { Calendar, User, FileImage, ExternalLink, MessageCircle } from "lucide-react";
 
 interface ImageItem { _id?: string; display_path?: string; modality?: string; uploadedAt?: string }
-interface ReportItem { _id?: string; status?: string; content?: string; authorName?: string; createdAt?: string }
+interface ReportItem {
+	_id?: string;
+	status?: string;
+	content?: string;
+	authorName?: string;
+	createdAt?: string;
+	updatedAt?: string;
+	diagnosis?: string;
+	aiAgreement?: string;
+	recommendations?: string[];
+	doctorComments?: string;
+}
 
 const normalize = (p?: string | null) => {
 	if (!p) return null;
@@ -31,6 +42,15 @@ export default function CaseView() {
 	const [images, setImages] = useState<ImageItem[]>([]);
 	const [analysis, setAnalysis] = useState<any | null>(null);
 	const [reports, setReports] = useState<ReportItem[]>([]);
+
+	const formatDoctorName = (name?: string, email?: string) => {
+		const n = (name || "").trim();
+		if (n && !n.includes("@")) return n;
+		const e = (email || n || "").trim();
+		const prefix = e.split("@")[0] || "";
+		if (!prefix) return "Doctor";
+		return prefix.replace(/[._-]+/g, " ").split(/\s+/).filter(Boolean).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+	};
 
 	useEffect(() => {
 		let cancelled = false;
@@ -113,8 +133,8 @@ export default function CaseView() {
 					<p className="text-sm text-muted-foreground">Patient: {caseInfo?.patient?.name || "Unknown"}</p>
 					<div className="flex items-center gap-4 text-sm text-muted-foreground mt-2">
 						<span className="flex items-center gap-1"><Calendar className="w-4 h-4" />{formatDate(caseInfo?.createdAt)}</span>
-						{caseInfo?.assignedDoctor?.name && (
-							<span className="flex items-center gap-1"><User className="w-4 h-4" />Dr. {caseInfo.assignedDoctor.name}</span>
+						{(caseInfo?.assignedDoctor?.name || caseInfo?.assignedDoctor?.email) && (
+							<span className="flex items-center gap-1"><User className="w-4 h-4" />Dr. {formatDoctorName(caseInfo?.assignedDoctor?.name, caseInfo?.assignedDoctor?.email)}</span>
 						)}
 					</div>
 				</div>
@@ -176,8 +196,12 @@ export default function CaseView() {
 					) : (
 						<div className="space-y-3">
 							{analysis.display_path && (
-								<div className="rounded border overflow-hidden">
-									<img src={normalize(analysis.display_path) || undefined} alt="Analysis" className="w-full h-auto object-contain" />
+								<div className="rounded border overflow-hidden flex items-center justify-center bg-white">
+									<img
+									  src={normalize(analysis.display_path) || undefined}
+									  alt="Analysis"
+									  className="w-full h-auto max-h-80 md:max-h-[28rem] object-contain mx-auto"
+									/>
 								</div>
 							)}
 							{analysis.summary && (
@@ -207,17 +231,57 @@ export default function CaseView() {
 					) : (
 						<div className="space-y-4">
 							{reports.map((r, idx) => (
-								<div key={r._id || idx} className="border rounded p-3">
-									<div className="flex items-center justify-between">
-										<div className="text-sm font-medium">Report</div>
+								<div key={r._id || idx} className="border rounded p-3 space-y-3">
+									{/* Header */}
+									<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
+										<div className="text-sm font-medium">Final Report</div>
 										<div className="text-xs text-muted-foreground">{formatDate(r.createdAt)}</div>
 									</div>
 									{r.authorName && (
-										<div className="text-xs text-muted-foreground mt-1">By Dr. {r.authorName}</div>
+										<div className="text-xs text-muted-foreground">By Dr. {formatDoctorName(r.authorName)}</div>
 									)}
+
+									{/* Diagnosis */}
+									{r.diagnosis && (
+										<div>
+											<div className="text-sm font-medium mb-1">Diagnosis</div>
+											<div className="text-sm whitespace-pre-wrap">{r.diagnosis}</div>
+										</div>
+									)}
+
+									{/* AI Agreement */}
+									{r.aiAgreement && (
+										<div className="text-sm">
+											<span className="font-medium">AI Agreement: </span>
+											<span className="capitalize">{String(r.aiAgreement)}</span>
+										</div>
+									)}
+
+									{/* Recommendations */}
+									{Array.isArray(r.recommendations) && r.recommendations.length > 0 && (
+										<div>
+											<div className="text-sm font-medium mb-1">Recommendations</div>
+											<div className="flex flex-wrap gap-2">
+												{r.recommendations.map((rec: string, i: number) => (
+													<span key={i} className="text-xs px-2 py-1 rounded bg-muted">{rec}</span>
+												))}
+											</div>
+										</div>
+									)}
+
+									{/* Additional Doctor Comments */}
+									{r.doctorComments && (
+										<div>
+											<div className="text-sm font-medium mb-1">Doctor Comments</div>
+											<div className="text-sm whitespace-pre-wrap">{r.doctorComments}</div>
+										</div>
+									)}
+
+									{/* Full Report Content */}
 									{r.content && (
-										<div className="mt-2 text-sm whitespace-pre-wrap">
-											{r.content.length > 400 ? `${r.content.slice(0, 400)}...` : r.content}
+										<div>
+											<div className="text-sm font-medium mb-1">Report Content</div>
+											<div className="text-sm whitespace-pre-wrap">{r.content}</div>
 										</div>
 									)}
 								</div>

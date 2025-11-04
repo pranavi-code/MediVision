@@ -50,6 +50,18 @@ const Chat = () => {
   const [error, setError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+  // Persist a stable thread ID across messages so the backend can store per-thread history
+  const [threadId, setThreadId] = useState<string>(() => {
+    try {
+      const existing = sessionStorage.getItem("medrax_thread_id");
+      if (existing && existing.length > 0) return existing;
+    } catch {}
+    const tid = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    try { sessionStorage.setItem("medrax_thread_id", tid); } catch {}
+    return tid;
+  });
+  const [threads, setThreads] = useState<any[]>([]);
+  const [threadsLoading, setThreadsLoading] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dicomInputRef = useRef<HTMLInputElement>(null);
@@ -66,6 +78,136 @@ const Chat = () => {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // Keep thread ID in session storage to persist across reloads in the same tab
+  useEffect(() => {
+    try { sessionStorage.setItem("medrax_thread_id", threadId); } catch {}
+  }, [threadId]);
+
+  // Fetch saved threads for current user (optional UI list)
+  const fetchThreads = async () => {
+    if (!token) return;
+    setThreadsLoading(true);
+    try {
+      const res = await fetch("http://localhost:8585/api/chat/threads?limit=20", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setThreads(Array.isArray(data.items) ? data.items : []);
+      }
+    } catch (e) {
+      // non-fatal
+    } finally {
+      setThreadsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchThreads();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  const openThread = async (tid: string) => {
+    if (!token) return;
+    try {
+      const res = await fetch(`http://localhost:8585/api/chat/threads/${encodeURIComponent(tid)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      // Convert stored messages into ChatMessage[] used by UI
+      const toText = (content: any): string => {
+        if (typeof content === "string") return content;
+        if (Array.isArray(content)) {
+          const textPart = content.find((p: any) => p && p.type === "text" && typeof p.text === "string");
+          if (textPart) return textPart.text as string;
+          return JSON.stringify(content);
+        }
+        // image-only content handled separately so we don't render a stray "(image)" bubble
+        if (content && typeof content === "object" && content.path) return "";
+        try {
+          const s = JSON.stringify(content);
+          return s;
+        } catch {
+          return String(content);
+        }
+      };
+
+      const stripPersona = (text: string): string => {
+        if (!text) return text;
+        if (text.startsWith("[Persona::")) {
+          const parts = text.split("\n\n", 1);
+          if (parts.length === 1) return text; // malformed
+          return text.slice(text.indexOf("\n\n") + 2);
+        }
+        return text;
+      };
+
+      // Coalesce user image messages into the subsequent user text message
+      const raw = Array.isArray(data.messages) ? data.messages : [];
+      const restored: ChatMessage[] = [];
+      let pendingUserImage: string | null = null;
+      for (let i = 0; i < raw.length; i++) {
+        const m = raw[i] || {};
+        const role: "user" | "assistant" = (m?.role === "user" || m?.role === "assistant")
+          ? (m.role as "user" | "assistant")
+          : (m?.content != null ? "user" : "assistant");
+        const c = m?.content;
+        const isImageObj = c && typeof c === "object" && (c.path || c.display_path);
+        if (role === "user") {
+          if (isImageObj) {
+            const rawPath = (c.display_path && String(c.display_path)) || (c.path && String(c.path)) || "";
+            const useDisplay = rawPath.toLowerCase().endsWith(".dcm") ? (data.display_path || rawPath) : rawPath;
+            pendingUserImage = normalize(useDisplay) || null;
+            continue;
+          }
+          let text = toText(c);
+          if (typeof text === "string") text = stripPersona(text);
+          restored.push({
+            id: generateMessageId(),
+            role: "user",
+            content: text,
+            timestamp: new Date(),
+            image: pendingUserImage || undefined,
+          });
+          pendingUserImage = null;
+        } else {
+          // assistant
+          let image: string | undefined = undefined;
+          if (isImageObj) {
+            const rawPath = (c.display_path && String(c.display_path)) || (c.path && String(c.path)) || "";
+            const useDisplay = rawPath.toLowerCase().endsWith(".dcm") ? (data.display_path || rawPath) : rawPath;
+            image = normalize(useDisplay) || undefined;
+          }
+          const text = isImageObj ? "" : toText(c);
+          restored.push({
+            id: generateMessageId(),
+            role: "assistant",
+            content: text,
+            timestamp: new Date(),
+            image,
+          });
+        }
+      }
+      if (pendingUserImage) {
+        restored.push({
+          id: generateMessageId(),
+          role: "user",
+          content: "",
+          timestamp: new Date(),
+          image: pendingUserImage || undefined,
+        });
+      }
+
+      setThreadId(tid);
+      setMessages(restored);
+      if (data.display_path) setUploadedImage(normalize(data.display_path));
+      else setUploadedImage(null);
+      setUploadedImagePath(null);
+      setError(null);
+    } catch {}
+  };
 
   /* ------------------------------------------------- */
   /*  Light-box ESC handling                           */
@@ -181,6 +323,7 @@ const Chat = () => {
     try {
       const form = new FormData();
       form.append("message", inputMessage);
+      form.append("thread_id", threadId);
       const imageWasSent = Boolean(imagePathToSend);
       if (imageWasSent && imagePathToSend) {
         form.append("image_path", imagePathToSend);
@@ -278,10 +421,18 @@ const Chat = () => {
         }
       }
 
-      // finalize
+      // finalize: stop streaming indicator
       setMessages((prev) =>
         prev.map((m) => (m.id === assistantMessageId ? { ...m, isStreaming: false } : m))
       );
+      // if assistant message ended up empty (no text/image), remove the placeholder bubble
+      setMessages((prev) => {
+        const msg = prev.find((m) => m.id === assistantMessageId);
+        if (msg && !msg.image && (!msg.content || msg.content.trim().length === 0)) {
+          return prev.filter((m) => m.id !== assistantMessageId);
+        }
+        return prev;
+      });
     } catch (err) {
       setError("Failed to send message. Please check if the server is running.");
       // remove failed placeholder
@@ -291,16 +442,58 @@ const Chat = () => {
     }
   };
   useEffect(() => {
-    // Load case details if caseId present
+    // Load case details if caseId present; use role-specific endpoints
     const run = async () => {
       if (caseId && token) {
         try {
-          const res = await fetch(`http://localhost:8585/api/doctor/cases/${encodeURIComponent(caseId)}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (res.ok) {
-            const data = await res.json();
-            setCaseInfo(data);
+          const isPatient = (user?.role === "patient");
+          if (isPatient) {
+            const [resCase, resImgs, resAnal] = await Promise.all([
+              fetch(`http://localhost:8585/api/patient/cases/${encodeURIComponent(caseId)}`, {
+                headers: { Authorization: `Bearer ${token}` },
+              }),
+              fetch(`http://localhost:8585/api/patient/cases/${encodeURIComponent(caseId)}/images`, {
+                headers: { Authorization: `Bearer ${token}` },
+              }),
+              fetch(`http://localhost:8585/api/patient/cases/${encodeURIComponent(caseId)}/analysis`, {
+                headers: { Authorization: `Bearer ${token}` },
+              }),
+            ]);
+            if (resCase.ok) {
+              const data = await resCase.json();
+              setCaseInfo(data);
+            }
+            if (resImgs.ok) {
+              const imgs = await resImgs.json();
+              const items = imgs.items || [];
+              if (items.length) {
+                const latest = items.sort((a: any, b: any) => String(a.uploadedAt).localeCompare(String(b.uploadedAt)))[items.length - 1];
+                setUploadedImage(normalize(latest.display_path));
+                // Note: we do NOT have original_path from patient endpoint; backend /chat will auto-load by caseId
+              }
+            }
+            if (resAnal.ok) {
+              const a = await resAnal.json();
+              const summary = a?.analysis?.summary;
+              if (summary && messages.length === 0) {
+                setMessages([
+                  {
+                    id: generateMessageId(),
+                    role: "assistant",
+                    content: `Doctor's analysis for case ${caseId}:\n\n${summary}`,
+                    timestamp: new Date(),
+                  },
+                ]);
+              }
+            }
+          } else {
+            const res = await fetch(`http://localhost:8585/api/doctor/cases/${encodeURIComponent(caseId)}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (res.ok) {
+              const data = await res.json();
+              setCaseInfo(data);
+            }
           }
         } catch {}
       } else {
@@ -308,18 +501,31 @@ const Chat = () => {
       }
     };
     run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [caseId, token]);
 
 
-  const clearChat = () => {
+  const clearChat = async () => {
+    setError(null);
+    // Tell backend to clear server-side state and delete persisted thread (best-effort)
+    try {
+      const form = new FormData();
+      form.append("thread_id", threadId);
+      await fetch("http://localhost:8585/api/chat/clear", {
+        method: "POST",
+        body: form,
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+    } catch {}
     setMessages([]);
     setUploadedImage(null);
     setUploadedImagePath(null);
-    setError(null);
   };
   const newThread = () => {
     setMessages([]);
     setError(null);
+    const tid = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    setThreadId(tid);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
@@ -334,42 +540,53 @@ const Chat = () => {
   /* ------------------------------------------------- */
   if (loading) return null;
   if (!user) return <Navigate to="/login" replace />;
+  const showStandaloneHeader = !(location.pathname.startsWith("/patient") || location.pathname.startsWith("/doctor") || location.pathname.startsWith("/lab"));
   return (
     <div className="bg-gradient-to-br from-slate-50 to-blue-50 dark:from-slate-900 dark:to-slate-800 w-full min-h-screen">
-      {/* Header */}
-      <div className="border-b bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm">
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-            <Activity className="h-8 w-8 text-blue-600" />
-            <div>
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-                MedRAX AI Assistant
-              </h1>
-              <p className="text-sm text-slate-600 dark:text-slate-400">
-                  {caseId && caseInfo ? (
-                    <span>
-                      Case {caseId} · Patient {caseInfo?.patient?.name || "Unknown"}
-                    </span>
-                  ) : (
-                    <span>Medical Reasoning Agent for Chest X-ray Analysis</span>
-                  )}
-              </p>
-            </div>
-            </div>
-            <div className="flex items-center gap-3 text-sm text-slate-600 dark:text-slate-300">
-              {user && <span className="hidden md:inline">{user.name || user.email}</span>}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => { logout(); navigate("/login"); }}
-              >
-                Logout
-              </Button>
+      {/* Header (only for general/standalone usage) */}
+      {showStandaloneHeader && (
+        <div className="border-b bg-white/70 dark:bg-slate-900/70 backdrop-blur-sm">
+          <div className="container mx-auto px-4 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Activity className="h-8 w-8 text-blue-600" />
+                <div>
+                  <h1 className="text-2xl font-bold text-slate-900 dark:text-white">MedRAX AI Assistant</h1>
+                  <p className="text-sm text-slate-600 dark:text-slate-400">
+                    {caseId && caseInfo ? (
+                      <span>
+                        Case {caseId} · Patient {caseInfo?.patient?.name || "Unknown"}
+                      </span>
+                    ) : (
+                      <span>Medical Reasoning Agent for Chest X-ray Analysis</span>
+                    )}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 text-sm text-slate-600 dark:text-slate-300">
+                {user && (
+                  <span className="hidden md:inline">
+                    {user.role === "doctor"
+                      ? ((user.name && !user.name.includes("@"))
+                          ? `Dr. ${user.name}`
+                          : (user.email
+                              ? `Dr. ${user.email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, c=>c.toUpperCase())}`
+                              : "Doctor"))
+                      : (user.name && user.name.trim().length > 0 ? user.name : "User")}
+                  </span>
+                )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => { logout(); navigate("/login"); }}
+                >
+                  Logout
+                </Button>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Main Content */}
       <div className="container mx-auto px-2 py-6 max-w-7xl w-full">
@@ -405,7 +622,16 @@ const Chat = () => {
                       </div>
                     )}
 
-                    {messages.map((message) => (
+                    {messages.map((message) => {
+                      if (
+                        message.role === "assistant" &&
+                        !message.isStreaming &&
+                        !message.image &&
+                        (!message.content || message.content.trim() === "")
+                      ) {
+                        return null; // hide stray empty assistant bubble
+                      }
+                      return (
                       <div
                         key={message.id}
                         className={`flex gap-3 items-start ${
@@ -474,7 +700,7 @@ const Chat = () => {
                           </div>
                         )}
                       </div>
-                    ))}
+                    );})}
 
                     <div ref={messagesEndRef} />
                   </div>
@@ -521,6 +747,33 @@ const Chat = () => {
               </CardHeader>
 
               <CardContent className="flex-1 overflow-auto space-y-4">
+                {/* Threads (history) */}
+                <div className="w-full rounded-lg border bg-white dark:bg-slate-800 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="font-medium">Threads</div>
+                    <button onClick={fetchThreads} className="text-xs text-blue-600 underline" disabled={threadsLoading}>
+                      {threadsLoading ? "Refreshing..." : "Refresh"}
+                    </button>
+                  </div>
+                  {(!threads || threads.length === 0) ? (
+                    <div className="text-xs text-slate-500">No saved threads yet.</div>
+                  ) : (
+                    <div className="space-y-2 max-h-40 overflow-auto thin-scrollbar">
+                      {threads.slice(0, 10).map((t) => (
+                        <div key={t.threadId} className="flex items-center justify-between gap-2">
+                          <div className="text-xs text-slate-600 dark:text-slate-300 truncate">
+                            <span className="opacity-70">#{String(t.threadId).slice(-6)}</span>
+                            {t.updatedAt ? <span className="ml-2 opacity-60">{String(t.updatedAt).replace('T',' ').slice(0,16)}</span> : null}
+                          </div>
+                          <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => openThread(t.threadId)}>
+                            Open
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 {/* Image preview */}
                 <div className="w-full h-[280px] sm:h-[320px] md:h-[360px] rounded-lg border shadow-sm bg-white dark:bg-slate-800 flex items-center justify-center overflow-hidden">
                   {uploadedImage ? (
