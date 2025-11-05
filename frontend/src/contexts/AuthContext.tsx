@@ -13,6 +13,8 @@ type AuthContextType = {
 	token: string | null;
 	loading: boolean;
 	login: (email: string, password: string) => Promise<User>;
+	// Generic way to set session from any login flow (e.g., patient login)
+	setSession: (user: User, token: string) => void;
 	logout: () => void;
 };
 
@@ -42,11 +44,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 			"/api/auth/login",
 			{ email, password }
 		);
-		localStorage.setItem("auth.token", res.token);
-		localStorage.setItem("auth.user", JSON.stringify(res.user));
-		setToken(res.token);
-		setUser(res.user);
+		// Reuse setSession to keep behavior consistent
+		setSession(res.user, res.token);
 		return res.user;
+	};
+
+	const setSession = (userObj: User, tokenStr: string) => {
+		localStorage.setItem("auth.token", tokenStr);
+		localStorage.setItem("auth.user", JSON.stringify(userObj));
+		setToken(tokenStr);
+		setUser(userObj);
 	};
 
 	const logout = () => {
@@ -57,7 +64,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 	};
 
 	const value = useMemo(
-		() => ({ user, token, loading, login, logout }),
+		() => ({ user, token, loading, login, setSession, logout }),
 		[user, token, loading]
 	);
 

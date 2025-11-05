@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { normalizeMediaPath } from "@/lib/url";
 
 type ImageItem = {
 	_id: string;
@@ -228,8 +229,8 @@ export default function CaseDetails() {
 					) : (
 						<div className="grid gap-4 md:grid-cols-3">
 							{images.map((img) => {
-								const isImage = (img.display_path || "").match(/\.(jpg|jpeg|png)$/i);
-								const displayUrl = img.display_path || (img.gridfs_id ? `/api/images/${img.gridfs_id}` : undefined);
+								const displayUrl = normalizeMediaPath(img.display_path);
+								const isImage = (displayUrl || "").match(/\.(jpg|jpeg|png|webp)$/i);
 								return (
 									<div key={img._id} className="border rounded p-3">
 										<div className="text-sm font-medium mb-2">{img.modality || "File"}</div>

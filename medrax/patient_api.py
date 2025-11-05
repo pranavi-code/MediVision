@@ -60,6 +60,7 @@ async def _get_patient_cases(user_payload: dict) -> List[str]:
 class PatientLoginPayload(BaseModel):
     caseId: Optional[str] = None
     patientId: Optional[str] = None
+    email: Optional[str] = None
     dob: str
 
 
@@ -117,8 +118,21 @@ async def patient_login(payload: PatientLoginPayload):
         if not allowed_ids:
             # not fatal; allows login but no cases
             allowed_ids = []
+    elif payload.email:
+        # Login by patient email + DOB to view all cases under that email
+        p = await db["patients"].find_one({"email": payload.email})
+        # Even if no patients doc, cases may exist with matching patient.email
+        if p and ((p.get("dob") or "").strip() != payload.dob.strip()):
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+        email = payload.email
+        name = (p or {}).get("name") or name
+        # Collect all cases with this patient email
+        async for c in db["cases"].find({"patient.email": email}):
+            cid = c.get("caseId")
+            if cid:
+                allowed_ids.append(cid)
     else:
-        raise HTTPException(status_code=400, detail="Provide caseId or patientId")
+        raise HTTPException(status_code=400, detail="Provide caseId or patientId or email")
 
     if email:
         token_claims["email"] = email
@@ -128,7 +142,7 @@ async def patient_login(payload: PatientLoginPayload):
 
     token = create_jwt(token_claims, _jwt_secret(), exp_seconds=60 * 60 * 8)
     user_obj = {
-        "id": payload.caseId or payload.patientId or "patient",
+        "id": payload.caseId or payload.patientId or (payload.email or "patient"),
         "email": email or "",
         "role": "patient",
         "name": name,
@@ -159,7 +173,16 @@ async def list_my_cases(Authorization: Optional[str] = Header(None)):
     items: List[Dict[str, Any]] = []
     async for c in cur:
         c["_id"] = str(c.get("_id"))
-        # Remove sensitive fields for patient view
+        # Hydrate assigned doctor name for patient view
+        if c.get("assignedDoctorId"):
+            try:
+                from bson import ObjectId
+                doc = await db["doctors"].find_one({"_id": ObjectId(c.get("assignedDoctorId"))})
+                if doc:
+                    c["assignedDoctor"] = {"name": doc.get("name"), "email": doc.get("email")}
+            except Exception:
+                pass
+        # Remove sensitive/internal fields for patient view
         if user.get("role") != "admin":
             c.pop("assignedDoctorId", None)
             c.pop("assignedLabTechId", None)
@@ -187,7 +210,15 @@ async def get_my_case(caseId: str, Authorization: Optional[str] = Header(None)):
             if not email or patient_email != email:
                 raise HTTPException(status_code=403, detail="Forbidden")
         
-        # Remove sensitive fields for patient view
+        # Hydrate assigned doctor name and remove sensitive fields
+        if c.get("assignedDoctorId"):
+            try:
+                from bson import ObjectId
+                doc = await db["doctors"].find_one({"_id": ObjectId(c.get("assignedDoctorId"))})
+                if doc:
+                    c["assignedDoctor"] = {"name": doc.get("name"), "email": doc.get("email")}
+            except Exception:
+                pass
         c.pop("assignedDoctorId", None)
         c.pop("assignedLabTechId", None)
         c.pop("lab_notes", None)

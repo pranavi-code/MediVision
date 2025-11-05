@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { api, makeApi } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
+import { sendDoctorCredentials, sendPatientCaseAccess } from "@/lib/email";
 // Confirm dialog removed as we no longer archive cases here
 
 type Doctor = { _id: string; name: string; email: string; specialty?: string; active?: boolean };
@@ -141,6 +142,21 @@ export default function AdminDashboard() {
 		setCreatingCase(false);
 		await refreshCases();
 			toast({ description: `Case ${res.caseId} created` });
+			// Send patient case access email if email is present
+			try {
+				if (newCase.patient.email) {
+					await sendPatientCaseAccess({
+						name: newCase.patient.name,
+						email: newCase.patient.email,
+						caseId: res.caseId,
+						dob: newCase.patient.dob || "",
+					});
+					toast({ description: `Access email sent to ${newCase.patient.email}` });
+				}
+			} catch (err) {
+				// Non-blocking: log and continue
+				console.warn("Failed to send patient access email", err);
+			}
 				setCreatingBusy(false);
 	}
 
@@ -164,6 +180,19 @@ export default function AdminDashboard() {
 		setNewDoctor({ name: "", email: "", password: "", specialty: "" });
 		await refreshDoctors();
 			toast({ description: `Doctor added` });
+			// Proactively email credentials using EmailJS (username = email)
+			try {
+				await sendDoctorCredentials({
+					name: newDoctor.name,
+					email: newDoctor.email,
+					username: newDoctor.email,
+					password: newDoctor.password,
+					specialty: newDoctor.specialty,
+				});
+				toast({ description: `Credentials emailed to ${newDoctor.email}` });
+			} catch (err) {
+				console.warn("Failed to send doctor credentials via EmailJS", err);
+			}
 				setBusyDoctorId(null);
 	}
 
@@ -175,12 +204,7 @@ export default function AdminDashboard() {
 				setBusyDoctorId(null);
 	}
 
-	async function onResendDoctor(id: string) {
-				setBusyDoctorId(id);
-				await authApi.post(`/api/doctors/${id}/send`);
-			toast({ description: `Credentials sent` });
-				setBusyDoctorId(null);
-	}
+// Removed doctor resend flow per requirements
 
 	async function onAddLabTech(e: React.FormEvent) {
 		e.preventDefault();
@@ -305,7 +329,37 @@ export default function AdminDashboard() {
 												<td className="p-3">{c.createdAt?.slice(0,10) || ""}</td>
 																		<td className="p-3 text-right flex gap-2 justify-end">
 																										<Button variant="outline" size="sm" disabled={busyCaseId===c.caseId} onClick={()=>{ navigator.clipboard.writeText(c.caseId); toast({ description: `Copied ${c.caseId}`}); }}>{busyCaseId===c.caseId?"...":"Copy ID"}</Button>
-																										<Button variant="outline" size="sm" disabled={busyCaseId===c.caseId} onClick={()=>{ setBusyCaseId(c.caseId); authApi.post(`/api/cases/${c.caseId}/resend`).then(()=>toast({description:"Instructions resent"})).finally(()=>setBusyCaseId(null)); }}>{busyCaseId===c.caseId?"...":"Resend"}</Button>
+																										<Button
+																											variant="outline"
+																											size="sm"
+																											disabled={busyCaseId===c.caseId}
+																											onClick={async ()=>{
+																												setBusyCaseId(c.caseId);
+																												try {
+																													if (c.patient?.email) {
+																														await sendPatientCaseAccess({
+																															name: c.patient?.name || "",
+																															email: c.patient?.email,
+																															caseId: c.caseId,
+																															dob: c.patient?.dob || "",
+																														});
+																														toast({ description: `Instructions resent to ${c.patient?.email}` });
+																													} else {
+																														await authApi.post(`/api/cases/${c.caseId}/resend`);
+																														toast({ description: "Instructions resent" });
+																													}
+																												} catch (err) {
+																													console.warn("Failed to resend via EmailJS, falling back", err);
+																													try {
+																														await authApi.post(`/api/cases/${c.caseId}/resend`);
+																														toast({ description: "Instructions resent" });
+																													} catch {}
+																												}
+																												setBusyCaseId(null);
+																											}}
+																										>
+																											{busyCaseId===c.caseId?"...":"Resend"}
+																										</Button>
 																										<select className="border rounded h-9 px-2 bg-background" disabled={busyCaseId===c.caseId} value={c.assignedDoctorId || ""} onChange={(e)=>onAssign(c.caseId, e.target.value || undefined, c.assignedLabTechId)}>
 														<option value="">Unassigned</option>
 														{doctors.map(d => <option key={d._id} value={d._id}>{d.name}</option>)}
@@ -376,7 +430,7 @@ export default function AdminDashboard() {
 											<td className="p-3">{d.active?"Yes":"No"}</td>
 											<td className="p-3 text-right flex gap-2 justify-end">
 												<Button variant="outline" size="sm" disabled={busyDoctorId===d._id} onClick={()=>onToggleDoctor(d._id)}>{busyDoctorId===d._id?"...":(d.active?"Deactivate":"Activate")}</Button>
-												<Button variant="outline" size="sm" disabled={busyDoctorId===d._id} onClick={()=>onResendDoctor(d._id)}>{busyDoctorId===d._id?"...":"Send Credentials"}</Button>
+															{/* Resend credentials button removed per requirements */}
 											</td>
 										</tr>
 									))}

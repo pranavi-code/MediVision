@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Activity, Mail, Lock, ArrowLeft, Moon, Sun, Eye, EyeOff } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
 
 const Login = () => {
   const [email, setEmail] = useState("");
@@ -16,6 +17,7 @@ const Login = () => {
   const navigate = useNavigate();
   const location = useLocation() as any;
   const [showPw, setShowPw] = useState(false);
+  const { toast } = useToast();
 
   useEffect(() => {
     const isDark = document.documentElement.classList.contains("dark");
@@ -40,6 +42,7 @@ const Login = () => {
     setLoading(true);
     try {
   const u = await login(email, password);
+  toast({ title: "Welcome back", description: u.name ? u.name : undefined });
   // If we came from a protected page, prefer sending back there when role matches
   const fromPath: string | undefined = location?.state?.from;
   const pathMatchesRole = (path?: string) => {
@@ -148,6 +151,12 @@ const Login = () => {
             Don't have an account?{" "}
             <Link to="/signup" className="text-primary hover:underline font-medium">
               Sign up for free
+            </Link>
+          </p>
+          <p className="text-center text-sm text-muted-foreground">
+            Patient?{" "}
+            <Link to="/patient-login" className="text-primary hover:underline font-medium">
+              Access your case here
             </Link>
           </p>
         </div>

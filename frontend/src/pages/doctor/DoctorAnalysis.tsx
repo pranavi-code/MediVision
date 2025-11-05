@@ -18,6 +18,9 @@ import {
   Save,
   CheckCircle
 } from "lucide-react";
+import { normalizeMediaPath } from "@/lib/url";
+import { makeApi } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 
 export default function DoctorAnalysis() {
   const { caseId } = useParams<{ caseId: string }>();
@@ -37,6 +40,8 @@ export default function DoctorAnalysis() {
   const [aiAgreement, setAiAgreement] = useState<string>("");
   const [doctorComments, setDoctorComments] = useState("");
   const [savingReport, setSavingReport] = useState(false);
+  const [loadingExisting, setLoadingExisting] = useState<string | null>(null);
+  const { toast } = useToast();
 
   const recommendationOptions = [
     "Follow-up CT scan",
@@ -105,9 +110,11 @@ export default function DoctorAnalysis() {
       if (res.ok) {
         const data = await res.json();
         setCaseData((prev: any) => ({ ...prev, ai_analysis: data.analysis }));
+        toast({ title: "Analysis Completed", description: "AI analysis is ready for review." });
       }
     } catch (error) {
       console.error('Analysis failed:', error);
+      toast({ title: "Analysis Failed", description: "Could not run AI analysis.", variant: "destructive" });
     } finally {
       setAnalyzing(false);
     }
@@ -145,11 +152,37 @@ export default function DoctorAnalysis() {
         setRecommendations([]);
         setAiAgreement("");
         setDoctorComments("");
+        toast({ title: status === 'final' ? "Report Finalized" : "Draft Saved", description: status === 'final' ? "The report has been finalized and shared." : "Your draft has been saved." });
       }
     } catch (error) {
       console.error('Failed to save report:', error);
+      toast({ title: "Save Failed", description: "Could not save the report.", variant: "destructive" });
     } finally {
       setSavingReport(false);
+    }
+  }
+
+  function loadReportToEditor(report: any) {
+    setAiAgreement(report.aiAgreement || "");
+    setDiagnosis(report.diagnosis || "");
+    setRecommendations(Array.isArray(report.recommendations) ? report.recommendations : []);
+    setDoctorComments(report.doctorComments || "");
+    setReportContent(report.content || "");
+  }
+
+  async function finalizeExistingReport(reportId: string) {
+    if (!caseId || !token) return;
+    setLoadingExisting(reportId);
+    try {
+      const authApi = makeApi(token);
+      await authApi.patch(`/api/doctor/cases/${encodeURIComponent(caseId)}/reports/${encodeURIComponent(reportId)}`, { status: "final" });
+      await loadCaseData();
+      toast({ title: "Report Finalized", description: "The selected report has been finalized." });
+    } catch (e) {
+      console.error("Failed to finalize report", e);
+      toast({ title: "Finalize Failed", description: "Could not finalize the report.", variant: "destructive" });
+    } finally {
+      setLoadingExisting(null);
     }
   }
 
@@ -236,8 +269,8 @@ export default function DoctorAnalysis() {
                   Case Information
                 </CardTitle>
               </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="grid grid-cols-2 gap-4 text-sm">
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                   <div>
                     <span className="font-medium">Case ID:</span> {caseData.caseId}
                   </div>
@@ -275,28 +308,34 @@ export default function DoctorAnalysis() {
                   Images ({images.length})
                 </CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-3">
                 {images.length === 0 ? (
                   <p className="text-muted-foreground text-sm">No images uploaded</p>
                 ) : (
-                  <div className="grid grid-cols-2 gap-3">
-                    {images.map((img, idx) => (
-                      <div key={img._id || idx} className="text-center">
-                        <img 
-                          src={img.display_path?.startsWith('/') 
-                            ? `http://localhost:8585${img.display_path}`
-                            : `http://localhost:8585/api/images/${img.gridfs_id}`
-                          } 
-                          className="h-32 w-full object-contain rounded border bg-white"
-                          alt={`Case image ${idx + 1}`}
-                        />
-                        <div className="text-xs text-muted-foreground mt-1">
-                          {img.modality && <span className="font-medium">{img.modality}</span>}
-                          <br />
-                          {new Date(img.uploadedAt).toLocaleString()}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {images.map((img, idx) => {
+                      const url = normalizeMediaPath(img.display_path);
+                      return (
+                        <div key={img._id || idx} className="text-center p-2 rounded border bg-card">
+                          {url ? (
+                            <img 
+                              src={url}
+                              className="h-40 w-full object-contain rounded border bg-white"
+                              alt={`Case image ${idx + 1}`}
+                            />
+                          ) : (
+                            <div className="h-40 w-full flex items-center justify-center rounded border bg-white text-xs text-muted-foreground">
+                              Preview not available
+                            </div>
+                          )}
+                          <div className="text-xs text-muted-foreground mt-1">
+                            {img.modality && <span className="font-medium">{img.modality}</span>}
+                            <br />
+                            {new Date(img.uploadedAt).toLocaleString()}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </CardContent>
@@ -310,7 +349,7 @@ export default function DoctorAnalysis() {
                   AI Analysis Results
                 </CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-4">
                 {!caseData.ai_analysis ? (
                   <div className="text-center py-8">
                     <p className="text-muted-foreground mb-4">
@@ -322,11 +361,15 @@ export default function DoctorAnalysis() {
                     {caseData.ai_analysis.display_path && (
                       <div>
                         <div className="font-medium text-sm mb-2">Processed Image:</div>
-                        <img 
-                          src={`http://localhost:8585${caseData.ai_analysis.display_path}`}
-                          className="max-h-64 rounded border object-contain bg-white w-full"
-                          alt="AI processed"
-                        />
+                        {normalizeMediaPath(caseData.ai_analysis.display_path) ? (
+                          <img 
+                            src={normalizeMediaPath(caseData.ai_analysis.display_path) || undefined}
+                            className="max-h-72 rounded border object-contain bg-white w-full"
+                            alt="AI processed"
+                          />
+                        ) : (
+                          <div className="text-sm text-muted-foreground">Preview not available</div>
+                        )}
                       </div>
                     )}
                     <div>
@@ -391,8 +434,20 @@ export default function DoctorAnalysis() {
                             {report.content}
                           </div>
                         )}
-                        <div className="text-xs text-muted-foreground mt-2">
-                          {new Date(report.updatedAt || report.createdAt).toLocaleString()}
+                        <div className="flex items-center justify-between mt-2">
+                          <div className="text-xs text-muted-foreground">
+                            {new Date(report.updatedAt || report.createdAt).toLocaleString()}
+                          </div>
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="outline" onClick={() => loadReportToEditor(report)}>
+                              Load into editor
+                            </Button>
+                            {report.status !== 'final' && (
+                              <Button size="sm" onClick={() => finalizeExistingReport(report._id)} disabled={loadingExisting === report._id}>
+                                {loadingExisting === report._id ? 'Finalizing...' : 'Finalize'}
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     ))}

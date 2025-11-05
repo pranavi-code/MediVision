@@ -35,7 +35,7 @@ export default function LabLayout({ children }: LabLayoutProps) {
             <div className="font-semibold text-lg">MediVision Lab</div>
           </div>
           <div className="flex items-center gap-3 text-sm text-muted-foreground">
-            <span>{user?.name || user?.email}</span>
+            <span>{(user?.name && user.name.trim().length>0) ? user.name : "Lab"}</span>
             <Button variant="outline" size="sm" onClick={onLogout}>
               <LogOut className="h-4 w-4 mr-2"/>Logout
             </Button>

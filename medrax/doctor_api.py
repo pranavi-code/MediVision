@@ -266,11 +266,22 @@ async def analyze_case(caseId: str, Authorization: Optional[str] = Header(None))
 
     # Build a concise context-only prompt
     patient = c.get("patient", {})
+    # Inject doctor persona instructions (no markdown headers; adapt to question)
+    try:
+        from api import _persona_text
+        persona = _persona_text("doctor")
+    except Exception:
+        persona = ""
     context = (
+        (persona + "\n\n") +
         f"Patient: {patient.get('name','Unknown')} | Age/DOB: {patient.get('dob','')} | Phone: {patient.get('phone','')}\n"
         f"Case ID: {c.get('caseId')} | Created: {c.get('createdAt','')}\n"
-        "Analyze the attached image for key findings and differential diagnosis.\n"
-        "Return a concise, clinically useful summary. End with a single line 'Confidence: NN%' where NN is 0-100."
+        "Analyze the attached image. If the image_path is a DICOM, first call dicom_processor to obtain a viewable image. "
+        "Then call chest_xray_classifier on the viewable image. Optionally call chest_xray_segmentation to localize findings.\n"
+        "Base your summary on the tool outputs. Report the top relevant pathologies with probabilities. "
+        "Only conclude 'no acute cardiopulmonary process' if Effusion, Pneumonia, Pneumothorax, Consolidation and Edema are all < 0.15.\n"
+        "Include a small 'Findings:' block listing up to the top 3 pathologies with probability ≥ 0.15 in the format 'Label p=0.xx'. If none exceed threshold, write 'Findings: No pathologies exceeded threshold (0.15)'. "
+        "Then include 'Impression:' as a one-line clinical summary. Return a clinically useful, structured summary (no markdown headers). End with a single line 'Confidence: NN%' where NN is 0-100."
     )
 
     # Use chat_interface to process a single message with the latest image
