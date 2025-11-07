@@ -18,6 +18,7 @@ import {
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useAuth } from "@/contexts/AuthContext";
 import { Navigate, useNavigate, useLocation } from "react-router-dom";
+import AuthorizedImage from "@/components/AuthorizedImage";
 
 interface ChatMessage {
   id: string;
@@ -659,13 +660,11 @@ const Chat = () => {
                             }
                           >
                             {message.image && (
-                              <img
-                                src={normalize(message.image) || undefined}
+                              <AuthorizedImage
+                                srcPath={normalize(message.image) || undefined}
                                 alt="attachment"
                                 className="rounded-md border mb-2 max-h-64 object-contain cursor-pointer"
-                                onClick={() =>
-                                  setLightboxSrc(normalize(message.image))
-                                }
+                                onClick={() => setLightboxSrc(normalize(message.image))}
                               />
                             )}
                             <div className="whitespace-pre-wrap">
@@ -777,8 +776,8 @@ const Chat = () => {
                 {/* Image preview */}
                 <div className="w-full h-[280px] sm:h-[320px] md:h-[360px] rounded-lg border shadow-sm bg-white dark:bg-slate-800 flex items-center justify-center overflow-hidden">
                   {uploadedImage ? (
-                    <img
-                      src={normalize(uploadedImage) || undefined}
+                    <AuthorizedImage
+                      srcPath={normalize(uploadedImage) || undefined}
                       alt="Uploaded X-ray"
                       className="h-full w-full object-contain"
                       onError={() => setUploadedImage(null)}

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Link, useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
+import AuthorizedImage from "@/components/AuthorizedImage";
 
 type CaseItem = {
   _id: string;
@@ -375,7 +376,11 @@ export default function DoctorDashboard() {
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   {images.map(img => (
                     <div key={img._id} className="text-center">
-                      <img src={img.display_path?.startsWith('/')?`http://localhost:8585${img.display_path}`:`http://localhost:8585/api/images/${img.gridfs_id}`} className="h-32 w-full object-contain rounded border bg-white" />
+                      <AuthorizedImage
+                        srcPath={img.display_path?.startsWith('/')?`http://localhost:8585${img.display_path}`:`http://localhost:8585/api/images/${img.gridfs_id}`}
+                        alt="case image"
+                        className="h-32 w-full object-contain rounded border bg-white"
+                      />
                       <div className="text-[10px] text-muted-foreground mt-1">{new Date(img.uploadedAt||'').toLocaleString()}</div>
                     </div>
                   ))}

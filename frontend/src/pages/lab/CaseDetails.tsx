@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { normalizeMediaPath } from "@/lib/url";
+import AuthorizedImage from "@/components/AuthorizedImage";
 
 type ImageItem = {
 	_id: string;
@@ -235,7 +236,7 @@ export default function CaseDetails() {
 									<div key={img._id} className="border rounded p-3">
 										<div className="text-sm font-medium mb-2">{img.modality || "File"}</div>
 										{isImage && displayUrl ? (
-											<img src={displayUrl} alt={img.modality || "image"} className="w-full h-40 object-cover rounded" />
+											<AuthorizedImage srcPath={displayUrl} alt={img.modality || "image"} className="w-full h-40 object-cover rounded" />
 										) : (
 											<div className="text-sm text-muted-foreground mb-2">Preview not available</div>
 										)}

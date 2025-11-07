@@ -1,0 +1,194 @@
+[
+  {
+    "image_path": "data/prepared/pngs/effusion1.png",
+    "case_id": null,
+    "modality": null,
+    "labels": {
+      "Effusion": 1,
+      "Pneumothorax": 0,
+      "Consolidation": 0,
+      "Edema": 0,
+      "Pneumonia": 0
+    }
+  },
+  {
+    "image_path": "data/prepared/pngs/LIDC.png",
+    "case_id": null,
+    "modality": "CR",
+    "labels": {
+      "Effusion": 0,
+      "Pneumothorax": 0,
+      "Consolidation": 0,
+      "Edema": 0,
+      "Pneumonia": 0
+    }
+  },
+  {
+    "image_path": "data/prepared/pngs/normal1.png",
+    "case_id": null,
+    "modality": null,
+    "labels": {
+      "Effusion": 0,
+      "Pneumothorax": 0,
+      "Consolidation": 0,
+      "Edema": 0,
+      "Pneumonia": 0
+    }
+  },
+  {
+    "image_path": "data/prepared/pngs/normal2.png",
+    "case_id": null,
+    "modality": null,
+    "labels": {
+      "Effusion": 0,
+      "Pneumothorax": 0,
+      "Consolidation": 0,
+      "Edema": 0,
+      "Pneumonia": 0
+    }
+  },
+  {
+    "image_path": "data/prepared/pngs/normal3.png",
+    "case_id": null,
+    "modality": null,
+    "labels": {
+      "Effusion": 0,
+      "Pneumothorax": 0,
+      "Consolidation": 0,
+      "Edema": 0,
+      "Pneumonia": 0
+    }
+  },
+  {
+    "image_path": "data/prepared/pngs/normal4.png",
+    "case_id": null,
+    "modality": null,
+    "labels": {
+      "Effusion": 0,
+      "Pneumothorax": 0,
+      "Consolidation": 0,
+      "Edema": 0,
+      "Pneumonia": 0
+    }
+  },
+  {
+    "image_path": "data/prepared/pngs/normal5.png",
+    "case_id": null,
+    "modality": null,
+    "labels": {
+      "Effusion": 0,
+      "Pneumothorax": 0,
+      "Consolidation": 0,
+      "Edema": 0,
+      "Pneumonia": 0
+    }
+  },
+  {
+    "image_path": "data/prepared/pngs/normal6.png",
+    "case_id": null,
+    "modality": null,
+    "labels": {
+      "Effusion": 0,
+      "Pneumothorax": 0,
+      "Consolidation": 0,
+      "Edema": 0,
+      "Pneumonia": 0
+    }
+  },
+  {
+    "image_path": "data/prepared/pngs/pneumonia1.png",
+    "case_id": null,
+    "modality": null,
+    "labels": {
+      "Effusion": 0,
+      "Pneumothorax": 0,
+      "Consolidation": 0,
+      "Edema": 0,
+      "Pneumonia": 1
+    }
+  },
+  {
+    "image_path": "data/prepared/pngs/pneumonia2.png",
+    "case_id": null,
+    "modality": null,
+    "labels": {
+      "Effusion": 0,
+      "Pneumothorax": 0,
+      "Consolidation": 0,
+      "Edema": 0,
+      "Pneumonia": 1
+    }
+  },
+  {
+    "image_path": "data/prepared/pngs/pneumonia3.png",
+    "case_id": null,
+    "modality": null,
+    "labels": {
+      "Effusion": 0,
+      "Pneumothorax": 0,
+      "Consolidation": 0,
+      "Edema": 0,
+      "Pneumonia": 1
+    }
+  },
+  {
+    "image_path": "data/prepared/pngs/pneumonia4.png",
+    "case_id": null,
+    "modality": null,
+    "labels": {
+      "Effusion": 0,
+      "Pneumothorax": 0,
+      "Consolidation": 0,
+      "Edema": 0,
+      "Pneumonia": 1
+    }
+  },
+  {
+    "image_path": "data/prepared/pngs/pneumonia5.png",
+    "case_id": null,
+    "modality": null,
+    "labels": {
+      "Effusion": 0,
+      "Pneumothorax": 0,
+      "Consolidation": 0,
+      "Edema": 0,
+      "Pneumonia": 1
+    }
+  },
+  {
+    "image_path": "data/prepared/pngs/Pseudo.png",
+    "case_id": null,
+    "modality": "CR",
+    "labels": {
+      "Effusion": 0,
+      "Pneumothorax": 0,
+      "Consolidation": 0,
+      "Edema": 0,
+      "Pneumonia": 0
+    }
+  },
+  {
+    "image_path": "data/prepared/pngs/RIDER.png",
+    "case_id": null,
+    "modality": "CR",
+    "labels": {
+      "Effusion": 0,
+      "Pneumothorax": 0,
+      "Consolidation": 0,
+      "Edema": 0,
+      "Pneumonia": 0
+    }
+  },
+  {
+    "image_path": "data/prepared/pngs/TCGAA.png",
+    "case_id": null,
+    "modality": "CR",
+    "labels": {
+      "Effusion": 0,
+      "Pneumothorax": 0,
+      "Consolidation": 0,
+      "Edema": 0,
+      "Pneumonia": 0
+    }
+  }
+]

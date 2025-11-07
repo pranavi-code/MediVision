@@ -20,6 +20,7 @@ import {
   User,
   ArrowLeft
 } from "lucide-react";
+import AuthorizedImage from "@/components/AuthorizedImage";
 
 interface ChatMessage {
   id: string;
@@ -70,6 +71,7 @@ export default function DoctorChat() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dicomInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const latestRequestRef = useRef<number>(0);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -94,24 +96,88 @@ export default function DoctorChat() {
     try { sessionStorage.setItem("medrax_doctor_thread_id", threadId); } catch {}
   }, [threadId]);
 
-  // Load case details if caseId present
+  // Lightweight fetch with retry and abort support
+  const fetchJson = async <T=any>(
+    url: string,
+    opts: RequestInit & { retries?: number; retryDelayMs?: number } = {}
+  ): Promise<T> => {
+    const { retries = 2, retryDelayMs = 300, ...rest } = opts;
+    let attempt = 0;
+    while (true) {
+      try {
+        const res = await fetch(url, rest);
+        if (!res.ok) {
+          // Retry on 429/5xx
+          if ((res.status === 429 || res.status >= 500) && attempt < retries) {
+            await new Promise((r) => setTimeout(r, retryDelayMs * Math.pow(2, attempt)));
+            attempt++;
+            continue;
+          }
+          throw new Error(`HTTP ${res.status}`);
+        }
+        return (await res.json()) as T;
+      } catch (e: any) {
+        if (e?.name === "AbortError") throw e; // bubble up aborts
+        if (attempt < retries) {
+          await new Promise((r) => setTimeout(r, retryDelayMs * Math.pow(2, attempt)));
+          attempt++;
+          continue;
+        }
+        throw e;
+      }
+    }
+  };
+
+  // Load case details if caseId present (with race guards)
   useEffect(() => {
     const loadCase = async () => {
       if (caseId && token) {
+        const reqId = Date.now();
+        latestRequestRef.current = reqId;
+        const controller = new AbortController();
+        const signal = controller.signal;
+        let aborted = false;
+        const cleanup = () => { aborted = true; controller.abort(); };
         try {
-          const res = await fetch(`http://localhost:8585/api/doctor/cases/${encodeURIComponent(caseId)}`, {
-            headers: { Authorization: `Bearer ${token}` }
-          });
-          if (res.ok) {
-            const data = await res.json();
-            setCaseInfo(data);
+          const data = await fetchJson<any>(
+            `http://localhost:8585/api/doctor/cases/${encodeURIComponent(caseId)}`,
+            { headers: { Authorization: `Bearer ${token}` }, signal }
+          );
+          if (aborted || latestRequestRef.current !== reqId) return;
+          setCaseInfo(data);
+          // If an AI analysis already exists, surface it as context on first load
+          if (messages.length === 0 && data?.ai_analysis?.summary) {
+            setMessages([
+              {
+                id: generateMessageId(),
+                role: "assistant",
+                content: `Doctor's analysis for case ${caseId}:\n\n${data.ai_analysis.summary}`,
+                timestamp: new Date(),
+              },
+            ]);
           }
-        } catch {}
+
+          // Load images to show preview (latest image)
+          const j = await fetchJson<any>(
+            `http://localhost:8585/api/doctor/cases/${encodeURIComponent(caseId)}/images`,
+            { headers: { Authorization: `Bearer ${token}` }, signal }
+          );
+          if (aborted || latestRequestRef.current !== reqId) return;
+          const items = Array.isArray(j.items) ? j.items : [];
+          if (items.length) {
+            const latest = [...items].sort((a: any, b: any) => String(a.uploadedAt||"").localeCompare(String(b.uploadedAt||"")))[items.length - 1];
+            if (latest?.display_path) setUploadedImage(normalize(latest.display_path));
+          }
+        } catch {
+          // swallow; UI will show empty state
+        }
+        return cleanup;
       } else {
         setCaseInfo(null);
       }
     };
-    loadCase();
+    const cleanup = loadCase();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [caseId, token]);
 
   const generateMessageId = () =>
@@ -346,13 +412,11 @@ export default function DoctorChat() {
     if (!token) return;
     setThreadsLoading(true);
     try {
-      const res = await fetch("http://localhost:8585/api/chat/threads?limit=20", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setThreads(Array.isArray(data.items) ? data.items : []);
-      }
+      const data = await fetchJson<any>(
+        "http://localhost:8585/api/chat/threads?limit=20",
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setThreads(Array.isArray(data.items) ? data.items : []);
     } catch {}
     setThreadsLoading(false);
   };
@@ -365,11 +429,10 @@ export default function DoctorChat() {
   const openThread = async (tid: string) => {
     if (!token) return;
     try {
-      const res = await fetch(`http://localhost:8585/api/chat/threads/${encodeURIComponent(tid)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return;
-      const data = await res.json();
+      const data = await fetchJson<any>(
+        `http://localhost:8585/api/chat/threads/${encodeURIComponent(tid)}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
 
       const toText = (content: any): string => {
         if (typeof content === "string") return content;
@@ -538,13 +601,11 @@ export default function DoctorChat() {
                               }
                             >
                               {message.image && (
-                                <img
-                                  src={normalize(message.image) || undefined}
+                                <AuthorizedImage
+                                  srcPath={normalize(message.image) || undefined}
                                   alt="attachment"
                                   className="rounded-md border mb-2 max-h-64 object-contain cursor-pointer"
-                                  onClick={() =>
-                                    setLightboxSrc(normalize(message.image))
-                                  }
+                                  onClick={() => setLightboxSrc(normalize(message.image))}
                                 />
                               )}
                               <div className="whitespace-pre-wrap">
@@ -656,8 +717,8 @@ export default function DoctorChat() {
                   {/* Image preview */}
                   <div className="w-full h-[280px] sm:h-[320px] md:h-[360px] rounded-lg border shadow-sm bg-white dark:bg-slate-800 flex items-center justify-center overflow-hidden">
                     {uploadedImage ? (
-                      <img
-                        src={normalize(uploadedImage) || undefined}
+                      <AuthorizedImage
+                        srcPath={normalize(uploadedImage) || undefined}
                         alt="Uploaded X-ray"
                         className="h-full w-full object-contain"
                         onError={() => setUploadedImage(null)}

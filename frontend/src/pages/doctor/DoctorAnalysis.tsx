@@ -19,6 +19,7 @@ import {
   CheckCircle
 } from "lucide-react";
 import { normalizeMediaPath } from "@/lib/url";
+import AuthorizedImage from "@/components/AuthorizedImage";
 import { makeApi } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
@@ -32,6 +33,7 @@ export default function DoctorAnalysis() {
   const [caseData, setCaseData] = useState<any>(null);
   const [images, setImages] = useState<any[]>([]);
   const [reports, setReports] = useState<any[]>([]);
+  const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
   
   // Report form state
   const [reportContent, setReportContent] = useState("");
@@ -78,7 +80,12 @@ export default function DoctorAnalysis() {
       });
       if (imagesRes.ok) {
         const imgData = await imagesRes.json();
-        setImages(imgData.items || []);
+        const items = imgData.items || [];
+        // sort by uploadedAt ascending then pick latest
+        const sorted = [...items].sort((a: any, b: any) => String(a.uploadedAt||"").localeCompare(String(b.uploadedAt||"")));
+        setImages(sorted);
+        const latest = sorted.length ? sorted[sorted.length - 1] : null;
+        setSelectedImageId(latest ? String(latest._id || latest.gridfs_id || "") : null);
       }
 
       // Load reports
@@ -102,9 +109,11 @@ export default function DoctorAnalysis() {
     
     setAnalyzing(true);
     try {
+      const body: any = selectedImageId ? { imageId: selectedImageId } : {};
       const res = await fetch(`http://localhost:8585/api/doctor/cases/${encodeURIComponent(caseId)}/analyze`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body)
       });
       
       if (res.ok) {
@@ -317,17 +326,25 @@ export default function DoctorAnalysis() {
                       const url = normalizeMediaPath(img.display_path);
                       return (
                         <div key={img._id || idx} className="text-center p-2 rounded border bg-card">
-                          {url ? (
-                            <img 
-                              src={url}
-                              className="h-40 w-full object-contain rounded border bg-white"
+                          <div className="relative">
+                            <AuthorizedImage
+                              srcPath={url || undefined}
                               alt={`Case image ${idx + 1}`}
+                              className="h-40 w-full object-contain rounded border bg-white"
                             />
-                          ) : (
-                            <div className="h-40 w-full flex items-center justify-center rounded border bg-white text-xs text-muted-foreground">
-                              Preview not available
+                            <div className="mt-2 flex items-center justify-center gap-2 text-xs">
+                              <label className="inline-flex items-center gap-1 cursor-pointer">
+                                <input
+                                  type="radio"
+                                  name="selected-image"
+                                  value={String(img._id || "")}
+                                  checked={selectedImageId === String(img._id || "")}
+                                  onChange={() => setSelectedImageId(String(img._id || ""))}
+                                />
+                                Analyze this image
+                              </label>
                             </div>
-                          )}
+                          </div>
                           <div className="text-xs text-muted-foreground mt-1">
                             {img.modality && <span className="font-medium">{img.modality}</span>}
                             <br />
@@ -361,23 +378,29 @@ export default function DoctorAnalysis() {
                     {caseData.ai_analysis.display_path && (
                       <div>
                         <div className="font-medium text-sm mb-2">Processed Image:</div>
-                        {normalizeMediaPath(caseData.ai_analysis.display_path) ? (
-                          <img 
-                            src={normalizeMediaPath(caseData.ai_analysis.display_path) || undefined}
-                            className="max-h-72 rounded border object-contain bg-white w-full"
-                            alt="AI processed"
-                          />
-                        ) : (
-                          <div className="text-sm text-muted-foreground">Preview not available</div>
-                        )}
+                        <AuthorizedImage
+                          srcPath={normalizeMediaPath(caseData.ai_analysis.display_path) || undefined}
+                          alt="AI processed"
+                          className="max-h-72 rounded border object-contain bg-white w-full"
+                        />
                       </div>
                     )}
                     <div>
-                      <div className="font-medium text-sm mb-2 flex items-center gap-2">
+                      <div className="font-medium text-sm mb-2 flex flex-wrap items-center gap-2">
                         Analysis Summary:
                         {typeof caseData.ai_analysis.confidence === 'number' && (
                           <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
                             {Math.round(caseData.ai_analysis.confidence)}% confidence
+                          </span>
+                        )}
+                        {caseData.ai_analysis.image_id && (
+                          <span className="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded">
+                            Image ID: {String(caseData.ai_analysis.image_id).slice(-6)}
+                          </span>
+                        )}
+                        {caseData.ai_analysis.image_path && (
+                          <span className="text-xs bg-slate-100 text-slate-700 px-2 py-1 rounded">
+                            Source: {caseData.ai_analysis.image_path.split(/[/\\]/).pop()}
                           </span>
                         )}
                       </div>

@@ -120,6 +120,7 @@ Common backend env vars:
 - FORCE_INIT=true with LAZY_INIT — background init after startup
 - OLLAMA_BASE_URL — set if using a local LLM through Ollama
 - CUDA_AVAILABLE=true — hint to prefer GPU
+- MEDRAX_LORA_PATH — optional path to PEFT LoRA adapters for the LLaVA model (auto‑loaded if set)
 
 ### 2) Frontend setup (Vite React)
 Create `frontend/.env` (or `.env.local`) with your API and EmailJS settings:

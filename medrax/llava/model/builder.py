@@ -6,6 +6,7 @@ from medrax.llava.constants import (
     DEFAULT_IM_START_TOKEN,
     DEFAULT_IM_END_TOKEN,
 )
+import os
 
 
 def load_pretrained_model(
@@ -40,6 +41,9 @@ def load_pretrained_model(
     # else:
     # kwargs["torch_dtype"] = torch_dtype
 
+    # Optional LoRA adapter path (from param in callers or env var)
+    lora_adapter_path = os.environ.get("MEDRAX_LORA_PATH")
+
     if "llava" in model_name.lower():
         # Load LLaVA model
         if "mistral" in model_name.lower():
@@ -52,6 +56,17 @@ def load_pretrained_model(
                 torch_dtype=torch_dtype,
                 **kwargs,
             )
+
+            # Try to load LoRA adapters if provided via env var
+            if lora_adapter_path:
+                try:
+                    from peft import PeftModel
+
+                    print(f"Loading LLaVA LoRA adapters from {lora_adapter_path}")
+                    model = PeftModel.from_pretrained(model, lora_adapter_path)
+                    # For inference, keep as PEFT-wrapped model (no merge) to save memory
+                except Exception as e:
+                    print(f"Warning: Failed to load LLaVA LoRA adapters: {e}")
 
     else:
         # Load language model

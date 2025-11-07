@@ -237,8 +237,12 @@ async def doctor_notifications(since: Optional[str] = None, Authorization: Optio
     return {"new_images": new_images, "new_analyses": new_analyses, "since": since or ""}
 
 
+class AnalyzeRequest(BaseModel):
+    imageId: Optional[str] = None
+
+
 @doctor_router.post("/cases/{caseId}/analyze")
-async def analyze_case(caseId: str, Authorization: Optional[str] = Header(None)):
+async def analyze_case(caseId: str, payload: Optional[AnalyzeRequest] = None, Authorization: Optional[str] = Header(None)):
     """Run MedRAX analysis on the latest image of the case and store results.
 
     Not hard-coded: uses the live chat interface tools. Stores output text and display image path.
@@ -255,8 +259,16 @@ async def analyze_case(caseId: str, Authorization: Optional[str] = Header(None))
     images = c.get("images", [])
     if not images:
         raise HTTPException(status_code=400, detail="No images attached")
-    latest = sorted(images, key=lambda x: x.get("uploadedAt", ""))[-1]
-    img_path = latest.get("original_path")
+    # If a specific imageId is provided, use it; else default to latest
+    selected = None
+    try:
+        if payload and payload.imageId:
+            selected = next((im for im in images if str(im.get("_id")) == str(payload.imageId)), None)
+    except Exception:
+        selected = None
+    if not selected:
+        selected = sorted(images, key=lambda x: x.get("uploadedAt", ""))[-1]
+    img_path = selected.get("original_path")
 
     # Lazy import to avoid circulars
     from api import initialize_medrax, chat_interface, initialization_error
@@ -327,6 +339,7 @@ async def analyze_case(caseId: str, Authorization: Optional[str] = Header(None))
         "summary": final_text,
         "display_path": display,
         "image_path": img_path,
+        "image_id": str(selected.get("_id")) if selected else None,
         "confidence": confidence,
         "analyzedAt": datetime.utcnow().isoformat(),
         "by": str(user.get("sub")),
