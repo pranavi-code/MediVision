@@ -28,7 +28,6 @@ MediVision improves diagnostic efficiency, supports medical education, and enabl
 3. The agent plans and invokes tools as needed (DICOM processing → classification → segmentation/grounding → reporting) while streaming tokens to the client.
 4. The server persists user and assistant turns (including image `display_path`) and strips persona prefixes from history for clean display.
 5. The React app renders conversation and images, manages threads, and exposes admin flows; EmailJS sends notifications on create/resend events.
-<br/>
 ![Architecture](https://github.com/user-attachments/assets/beb81764-b1d4-49f2-ad99-44169a8224e0)
 
 <br/>
