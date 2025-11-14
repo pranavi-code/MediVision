@@ -1,9 +1,4 @@
 <h1>🩺 MediVision — Multimodal AI for Real‑Time Chest X‑ray Diagnosis</h1>
-<p>FastAPI + React app that combines a multimodal LLM with domain tools (classification, segmentation, VQA, grounding, report generation) to assist clinical CXR interpretation in real time.</p>
-<p align="center"> <a href="https://arxiv.org/abs/2502.02673" target="_blank"><img src="https://img.shields.io/badge/arXiv-ICML 2025-FF6B6B?style=for-the-badge&logo=arxiv&logoColor=white" alt="arXiv"></a> <a href="https://github.com/bowang-lab/MedRAX"><img src="https://img.shields.io/badge/GitHub-Code-4A90E2?style=for-the-badge&logo=github&logoColor=white" alt="GitHub"></a> <a href="https://huggingface.co/datasets/wanglab/chest-agent-bench"><img src="https://img.shields.io/badge/HuggingFace-Dataset-FFBF00?style=for-the-badge&logo=huggingface&logoColor=white" alt="HuggingFace Dataset"></a> </p>
-
-![](assets/demo_fast.gif?autoplay=1)
-
 <br>
 
 ## 📝 Abstract
