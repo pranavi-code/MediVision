@@ -15,13 +15,9 @@ MediVision improves diagnostic efficiency, supports medical education, and enabl
 - 📋 Structured output: concise “Findings” (top 3 ≥ 0.15 probability) and a single‑line “Impression”.
 - 🧠 Multimodal reasoning: GPT‑4o/LLaVA‑Med or local LLMs + domain tools for segmentation, classification, grounding, VQA, and reporting.
 - 🔄 Agentic execution: ReAct‑style tool selection/orchestration with streaming responses; tool chatter hidden.
-- 👋 Greeting short‑circuit: simple greetings answered briefly without running tools.
-- 🖼️ DICOM/image workflows: upload, preview, and stable rendering (persisted display paths) in chat and history.
 - 🧵 Thread persistence: restore prior conversations with both user and assistant turns; no empty placeholders.
 - 🛠️ Admin dashboard: create cases, assign doctors/lab techs, manage users.
 - ✉️ Email notifications (EmailJS): separate doctor (credentials) and patient (case access) templates.
-  - Doctors: credentials emailed immediately at creation (username=email; no insecure resend).
-  - Patients: case access email with two login paths (Case ID + DOB, or Email + DOB).
 - 🔒 Privacy‑minded: JWT auth, CORS, optional MongoDB persistence; designed to run behind TLS and RBAC.
 
 <br/>
@@ -32,10 +28,7 @@ MediVision improves diagnostic efficiency, supports medical education, and enabl
 3. The agent plans and invokes tools as needed (DICOM processing → classification → segmentation/grounding → reporting) while streaming tokens to the client.
 4. The server persists user and assistant turns (including image `display_path`) and strips persona prefixes from history for clean display.
 5. The React app renders conversation and images, manages threads, and exposes admin flows; EmailJS sends notifications on create/resend events.
-
-Notes:
-- Greetings/no‑image small talk bypasses tool calls for speed and UX.
-- Tool names/outputs are never surfaced; replies synthesize findings in plain language.
+![Architecture](https://github.com/user-attachments/assets/beb81764-b1d4-49f2-ad99-44169a8224e0)
 
 <br/>
 
