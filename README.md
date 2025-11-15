@@ -1,9 +1,4 @@
 <h1>🩺 MediVision — Multimodal AI for Real‑Time Chest X‑ray Diagnosis</h1>
-<p>FastAPI + React app that combines a multimodal LLM with domain tools (classification, segmentation, VQA, grounding, report generation) to assist clinical CXR interpretation in real time.</p>
-<p align="center"> <a href="https://arxiv.org/abs/2502.02673" target="_blank"><img src="https://img.shields.io/badge/arXiv-ICML 2025-FF6B6B?style=for-the-badge&logo=arxiv&logoColor=white" alt="arXiv"></a> <a href="https://github.com/bowang-lab/MedRAX"><img src="https://img.shields.io/badge/GitHub-Code-4A90E2?style=for-the-badge&logo=github&logoColor=white" alt="GitHub"></a> <a href="https://huggingface.co/datasets/wanglab/chest-agent-bench"><img src="https://img.shields.io/badge/HuggingFace-Dataset-FFBF00?style=for-the-badge&logo=huggingface&logoColor=white" alt="HuggingFace Dataset"></a> </p>
-
-![](assets/demo_fast.gif?autoplay=1)
-
 <br>
 
 ## 📝 Abstract
@@ -20,13 +15,9 @@ MediVision improves diagnostic efficiency, supports medical education, and enabl
 - 📋 Structured output: concise “Findings” (top 3 ≥ 0.15 probability) and a single‑line “Impression”.
 - 🧠 Multimodal reasoning: GPT‑4o/LLaVA‑Med or local LLMs + domain tools for segmentation, classification, grounding, VQA, and reporting.
 - 🔄 Agentic execution: ReAct‑style tool selection/orchestration with streaming responses; tool chatter hidden.
-- 👋 Greeting short‑circuit: simple greetings answered briefly without running tools.
-- 🖼️ DICOM/image workflows: upload, preview, and stable rendering (persisted display paths) in chat and history.
 - 🧵 Thread persistence: restore prior conversations with both user and assistant turns; no empty placeholders.
 - 🛠️ Admin dashboard: create cases, assign doctors/lab techs, manage users.
 - ✉️ Email notifications (EmailJS): separate doctor (credentials) and patient (case access) templates.
-  - Doctors: credentials emailed immediately at creation (username=email; no insecure resend).
-  - Patients: case access email with two login paths (Case ID + DOB, or Email + DOB).
 - 🔒 Privacy‑minded: JWT auth, CORS, optional MongoDB persistence; designed to run behind TLS and RBAC.
 
 <br/>
@@ -37,10 +28,7 @@ MediVision improves diagnostic efficiency, supports medical education, and enabl
 3. The agent plans and invokes tools as needed (DICOM processing → classification → segmentation/grounding → reporting) while streaming tokens to the client.
 4. The server persists user and assistant turns (including image `display_path`) and strips persona prefixes from history for clean display.
 5. The React app renders conversation and images, manages threads, and exposes admin flows; EmailJS sends notifications on create/resend events.
-
-Notes:
-- Greetings/no‑image small talk bypasses tool calls for speed and UX.
-- Tool names/outputs are never surfaced; replies synthesize findings in plain language.
+![Architecture](https://github.com/user-attachments/assets/beb81764-b1d4-49f2-ad99-44169a8224e0)
 
 <br/>
 
