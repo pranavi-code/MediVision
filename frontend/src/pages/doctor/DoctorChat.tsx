@@ -55,14 +55,15 @@ export default function DoctorChat() {
   const [error, setError] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
-  // Persist a stable thread ID per doctor chat session so server can store history per thread
+  // Persist a stable thread ID per CASE so history is isolated per case
   const [threadId, setThreadId] = useState<string>(() => {
+    const key = caseId ? `medrax_doctor_thread_id_${caseId}` : "medrax_doctor_thread_id";
     try {
-      const existing = sessionStorage.getItem("medrax_doctor_thread_id");
+      const existing = sessionStorage.getItem(key);
       if (existing && existing.length > 0) return existing;
     } catch {}
     const tid = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-    try { sessionStorage.setItem("medrax_doctor_thread_id", tid); } catch {}
+    try { sessionStorage.setItem(key, tid); } catch {}
     return tid;
   });
   const [threads, setThreads] = useState<any[]>([]);
@@ -91,10 +92,31 @@ export default function DoctorChat() {
     };
   }, [lightboxSrc]);
 
-  // Keep thread ID in session storage
+  // Keep thread ID in session storage (per case key)
   useEffect(() => {
-    try { sessionStorage.setItem("medrax_doctor_thread_id", threadId); } catch {}
-  }, [threadId]);
+    const key = caseId ? `medrax_doctor_thread_id_${caseId}` : "medrax_doctor_thread_id";
+    try { sessionStorage.setItem(key, threadId); } catch {}
+  }, [threadId, caseId]);
+
+  // When caseId changes, scope a new/previous case-specific thread and reset view state
+  useEffect(() => {
+    const key = caseId ? `medrax_doctor_thread_id_${caseId}` : "medrax_doctor_thread_id";
+    let tid = threadId;
+    const alreadyScoped = sessionStorage.getItem(key);
+    if (!alreadyScoped) {
+      tid = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+      try { sessionStorage.setItem(key, tid); } catch {}
+    } else if (alreadyScoped !== threadId) {
+      tid = alreadyScoped;
+    }
+    if (tid !== threadId) setThreadId(tid);
+    // Reset UI state to avoid bleeding responses across cases
+    setMessages([]);
+    setUploadedImage(null);
+    setUploadedImagePath(null);
+    setError(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [caseId]);
 
   // Lightweight fetch with retry and abort support
   const fetchJson = async <T=any>(
